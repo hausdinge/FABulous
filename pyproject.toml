@@ -31,7 +31,7 @@ dependencies = [
   "pydantic-settings>=2.10.1",
   "packaging>=25.0",
   "typer>=0.20.0",
-  "FABulous-bit-gen>=0.3.1",
+  "fabulous-bit-gen @ git+https://github.com/hausdinge/FABulous-bit-gen.git@conf_encoding_p_outof_n",
   'PyYAML>=6.0.0',
   "librelane>=3.0.0",
   "pick>=2.4.0",
@@ -169,10 +169,10 @@ extend_exclude = [
 ]
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["go-task-bin", "FABulous-bit-gen"]
+DEP002 = ["go-task-bin", "fabulous-bit-gen"]
 
 [tool.deptry.package_module_name_map]
-FABulous-bit-gen = "FABulous_bit_gen"
+fabulous-bit-gen = "fabulous_bit_gen"
 
 [tool.uv.sources]
 sdf-timing = { git = "https://github.com/FPGA-Research/f4pga-sdf-timing.git" }

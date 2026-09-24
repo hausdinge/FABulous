@@ -24,6 +24,10 @@ from fabulous.fabric_definition.define import (
     Side,
     grid_at,
 )
+from fabulous.fabric_definition.frame_strobe import (
+    FrameStrobeEncoding,
+    frame_strobe_masks,
+)
 from fabulous.fabric_definition.supertile import SuperTile
 from fabulous.fabric_definition.tile import Tile
 from fabulous.fabric_generator.code_generator.code_generator import CodeGenerator
@@ -42,6 +46,7 @@ def generateTile(
     max_frame_per_col: int = 20,
     disable_user_clk: bool = False,
     config_bit_mode: ConfigBitMode = ConfigBitMode.FRAME_BASED,
+    frame_strobe_encoding: FrameStrobeEncoding | None = None,
 ) -> None:
     """Generate the RTL code for a tile given the tile object.
 
@@ -89,6 +94,8 @@ def generateTile(
         If True, the UserCLK port will not be generated or connected
     config_bit_mode : ConfigBitMode
         The configuration bit mode to use (frame-based or FlipFlop chain)
+    frame_strobe_encoding : FrameStrobeEncoding | None
+        Optional frame encoding; affects emulation storage, not physical ports.
 
     Raises
     ------
@@ -101,7 +108,9 @@ def generateTile(
     writer.addHeader(f"{tile.name}")
     writer.addParameterStart(indentLevel=1)
     if isinstance(writer, VerilogCodeGenerator):  # emulation only in Verilog
-        maxBits = frame_bits_per_row * max_frame_per_col
+        maxBits = frame_bits_per_row * len(
+            frame_strobe_masks(max_frame_per_col, frame_strobe_encoding)
+        )
         writer.addPreprocIfDef("EMULATION")
         writer.addParameter(
             "Emulate_Bitstream",
@@ -603,6 +612,7 @@ def generateSuperTile(
     disable_user_clk: bool = False,
     config_bit_mode: ConfigBitMode = ConfigBitMode.FRAME_BASED,
     user_clk_side: Side = Side.SOUTH,
+    frame_strobe_encoding: FrameStrobeEncoding | None = None,
 ) -> None:
     """Generate a super tile wrapper for given super tile.
 
@@ -631,6 +641,8 @@ def generateSuperTile(
     user_clk_side : Side
         Side on which UserCLK enters each subtile; the chain runs towards the
         opposite side. Default SOUTH (S->N ladder).
+    frame_strobe_encoding : FrameStrobeEncoding | None
+        Optional frame encoding; affects emulation storage, not physical ports.
 
     Raises
     ------
@@ -643,7 +655,9 @@ def generateSuperTile(
     writer.addParameterStart(indentLevel=1)
     if isinstance(writer, VerilogCodeGenerator):
         writer.addPreprocIfDef("EMULATION")
-        maxBits = frame_bits_per_row * max_frame_per_col
+        maxBits = frame_bits_per_row * len(
+            frame_strobe_masks(max_frame_per_col, frame_strobe_encoding)
+        )
         for y, row in enumerate(superTile.tileMap):
             for x, tile in enumerate(row):
                 if not tile:

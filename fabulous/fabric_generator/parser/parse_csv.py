@@ -25,6 +25,7 @@ from fabulous.fabric_definition.define import (
     Side,
 )
 from fabulous.fabric_definition.fabric import Fabric
+from fabulous.fabric_definition.frame_strobe import FrameStrobeEncoding
 from fabulous.fabric_definition.gen_io import Gen_IO
 from fabulous.fabric_definition.port import NULL_PORT_NAME, TilePort
 from fabulous.fabric_definition.supertile import SuperTile
@@ -917,6 +918,8 @@ def parseFabricCSV(fileName: str) -> Fabric:
     configBitMode = ConfigBitMode.FRAME_BASED
     frameBitsPerRow = 32
     maxFramesPerCol = 20
+    frame_strobe_encoding = FrameStrobeEncoding()
+    encoding_seen = False
     package = "use work.my_package.all;"
     generateDelayInSwitchMatrix = 80
     multiplexerStyle = MultiplexerStyle.CUSTOM
@@ -926,6 +929,7 @@ def parseFabricCSV(fileName: str) -> Fabric:
     multiClkDomains = False
 
     for i in parameters:
+        raw_fields = [value.strip() for value in i.split(",")]
         i = i.split(",")
         i = [j for j in i if j != ""]
         i = [i.strip() for i in i]
@@ -961,6 +965,23 @@ def parseFabricCSV(fileName: str) -> Fabric:
             frameBitsPerRow = int(i[1])
         elif i[0].startswith("MaxFramesPerCol"):
             maxFramesPerCol = int(i[1])
+        elif i[0] == "FrameStrobeEncoding":
+            if (
+                encoding_seen
+                or len(i) != 4
+                or i[1] != "q_of_n"
+                or not all(raw_fields[:4])
+            ):
+                raise InvalidFabricParameter(
+                    "Specify FrameStrobeEncoding,q_of_n,q,n exactly once"
+                )
+            try:
+                frame_strobe_encoding = FrameStrobeEncoding(q=int(i[2]), n=int(i[3]))
+            except ValueError as exc:
+                raise InvalidFabricParameter(
+                    f"Invalid FrameStrobeEncoding: {exc}"
+                ) from exc
+            encoding_seen = True
         elif i[0].startswith("Package"):
             package = i[1]
         elif i[0].startswith("GenerateDelayInSwitchMatrix"):
@@ -1049,6 +1070,7 @@ def parseFabricCSV(fileName: str) -> Fabric:
         configBitMode=configBitMode,
         frameBitsPerRow=frameBitsPerRow,
         maxFramesPerCol=maxFramesPerCol,
+        frame_strobe_encoding=frame_strobe_encoding,
         package=package,
         generateDelayInSwitchMatrix=generateDelayInSwitchMatrix,
         multiplexerStyle=multiplexerStyle,

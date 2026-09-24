@@ -71,6 +71,13 @@ def parseConfigMem(
                 f"but MaxFramesPerCol is {maxFramePerCol}."
             )
 
+        frame_indices = [int(entry["frame_index"]) for entry in mappingFile]
+        if sorted(frame_indices) != list(range(maxFramePerCol)):
+            raise ValueError(
+                "ConfigMem frame indices must cover each logical frame exactly once "
+                f"(0 through {maxFramePerCol - 1})."
+            )
+
         # we also check used_bits_mask (is a vector that is as long as a frame and
         # contains a '1' for a bit used and a '0' if not used (padded)
         usedBitsCounter = 0

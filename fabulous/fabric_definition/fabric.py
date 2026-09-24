@@ -16,6 +16,7 @@ from fabulous.fabric_definition.define import (
     MultiplexerStyle,
     Side,
 )
+from fabulous.fabric_definition.frame_strobe import FrameStrobeEncoding
 from fabulous.fabric_definition.supertile import SuperTile
 from fabulous.fabric_definition.tile import Tile
 from fabulous.fabric_definition.wire import Wire
@@ -45,7 +46,9 @@ class Fabric:
     frameBitsPerRow : int
         The number of frame bits per row of the fabric
     maxFramesPerCol : int
-        The maximum number of frames per column of the fabric
+        The physical FrameStrobe width, unchanged by frame encoding.
+    frame_strobe_encoding : FrameStrobeEncoding
+        Selection code used by configuration memories and the bitstream writer.
     package : str
         The extra package used by the fabric. Only useful for VHDL output.
     generateDelayInSwitchMatrix : int
@@ -102,6 +105,9 @@ class Fabric:
     configBitMode: ConfigBitMode = ConfigBitMode.FRAME_BASED
     frameBitsPerRow: int = 32
     maxFramesPerCol: int = 20
+    frame_strobe_encoding: FrameStrobeEncoding = field(
+        default_factory=FrameStrobeEncoding
+    )
     package: str = "use work.my_package.all"
     generateDelayInSwitchMatrix: int = 80
     multiplexerStyle: MultiplexerStyle = MultiplexerStyle.CUSTOM
@@ -151,6 +157,13 @@ class Fabric:
             raise ValueError(
                 "Due to bitstream limitations, maxFramesPerCol must be 20."
             )
+
+        self.frame_strobe_encoding.masks(self.maxFramesPerCol)
+        if (
+            self.configBitMode != ConfigBitMode.FRAME_BASED
+            and self.frame_strobe_encoding.q != 1
+        ):
+            raise ValueError("FrameStrobeEncoding requires frame_based configuration")
 
         if self.frameSelectWidth != 5:
             raise ValueError(
@@ -401,6 +414,11 @@ class Fabric:
         for fx, fy in touched:
             tile = self.tile[fy][fx]
             tile.wireList = list(dict.fromkeys(tile.wireList))
+
+    @property
+    def logical_frames_per_col(self) -> int:
+        """Return configuration-memory capacity without changing physical ports."""
+        return len(self.frame_strobe_encoding.masks(self.maxFramesPerCol))
 
     def iter_super_tile_placements(
         self, superTile: SuperTile | None = None

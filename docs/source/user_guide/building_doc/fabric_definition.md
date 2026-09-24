@@ -139,7 +139,9 @@ It is planned to remove these limitations in future versions of FABulous.
 
   - `MaxFramesPerCol`, `unsigned_int`
 
-    For the frame-based configuration mode, this will specify the number of configurations frames a tile may use. The total number of configuration bits usable is:
+    This specifies the physical FrameStrobe width. Without frame-strobe encoding,
+    it also specifies the number of configuration frames a tile may use. The
+    total number of configuration bits usable without encoding is:
 
     `FrameBitsPerRow` x `MaxFramesPerCol`
 
@@ -147,10 +149,50 @@ It is planned to remove these limitations in future versions of FABulous.
 
     FABulous will generate the specified number of vertical frame_strobe wires in the fabric, which correspond to wordlines in memory organisation.
 
-    `FrameBitsPerRow` and `MaxFramesPerCol` should be around the same number to minimize the wiring resources for driving the configuration bits into the fabric. In most cases, only `MaxFramesPerCol` will be adjusted to a number that can accomodate the number of configuration bits needed.
+    The current configuration controller requires `MaxFramesPerCol=20` and
+    `FrameBitsPerRow=32`. Use `FrameStrobeEncoding` to increase storage capacity
+    while preserving that interface.
 
-    Currently, we set `MaxFramesPerCol` globally for all resource types (e.g., LUTs and DSP block columns) but we plan to extend this to allow for resource-type specific adjustments.
-    This feature may include an automatic adjustment mode.
+  - `FrameStrobeEncoding`, `q_of_n`, `q`, `n` (optional)
+
+    Encodes frame selection without changing the physical configuration interface.
+    Keep `FrameBitsPerRow,32` and `MaxFramesPerCol,20`. For example:
+
+    ```csv
+    FrameStrobeEncoding,q_of_n,2,6
+    ```
+
+    The lowest `20-n` strobes select frames directly. The highest `n` strobes
+    select one frame for each combination of `q` asserted wires, ordered
+    lexicographically by wire index. Thus `2,6` gives 14 direct frames and 15
+    encoded frames: 29 frames, or 928 configuration bits per tile. Frame 14 uses
+    wires 14 and 15; frame 28 uses wires 18 and 19. Configuration memory contains
+    the required AND gates; the tile passes the original 20 strobes onward.
+
+    If the option is omitted, the internal representation is `q=1,n=20` and the
+    existing direct-strobe mapping, generated interface, and bitstream format are
+    unchanged. This also preserves simultaneous direct-strobe writes. All tiles
+    share the fabric encoding, but unused frames require neither latches nor
+    decoder gates. The option applies only to frame-based configuration.
+
+    Values must satisfy `1 <= q <= n <= 20`. The derived logical frame count,
+    `20-n + binomial(n,q)`, must not exceed 256; this bounds generated decoder size.
+    The configuration-memory CSV uses the logical frame count (29 rows for
+    `2,6`), while `MaxFramesPerCol` continues to describe the physical 20-wire
+    interface. Regenerate the mapping CSVs and all configuration-memory RTL when
+    changing encoding. Existing CSVs with the wrong frame count are rejected;
+    custom mappings are not silently overwritten.
+
+    The bitstream specification exports `ArchSpecs.FrameStrobeEncoding` and an
+    ordered `ArchSpecs.FrameStrobeMasks` table for encoded fabrics. The binary
+    writer must support these fields and use each mask instead of `1 << frame`.
+    `FABulous-bit-gen` 0.3.1 does **not** support encoded strobes; the matching
+    writer update is required before generating an encoded bitstream. Old
+    bitstreams are not compatible with a fabric whose encoding has changed.
+    Column addresses, the desynchronization flag, and frame-data write timing
+    are unchanged. Encoded writes assert exactly `q` group wires, with the lower
+    direct wires clear; direct writes leave the encoded group clear. Hardware
+    uses simple AND decoding and does not reject malformed multi-frame commands.
 
   - `Package`, `string`
 

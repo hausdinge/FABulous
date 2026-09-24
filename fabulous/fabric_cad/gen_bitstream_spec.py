@@ -78,6 +78,18 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
         },
     }
 
+    # Old specifications retain their exact shape. Encoded specifications carry
+    # the actual address masks so the writer never reconstructs an RTL mapping.
+    if fabric.frame_strobe_encoding.q != 1:
+        specData["ArchSpecs"]["FrameStrobeEncoding"] = {
+            "kind": "q_of_n",
+            **fabric.frame_strobe_encoding.model_dump(),
+        }
+        specData["ArchSpecs"]["FrameStrobeMasks"] = list(
+            fabric.frame_strobe_encoding.masks(fabric.maxFramesPerCol)
+        )
+    logical_frames = fabric.logical_frames_per_col
+
     tileMap = {}
     for y, row in enumerate(fabric.tile):
         for x, tile in enumerate(row):
@@ -118,7 +130,7 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
             if configMemPath.exists() and configMemPath.is_file():
                 configMemList = parseConfigMem(
                     configMemPath,
-                    fabric.maxFramesPerCol,
+                    logical_frames,
                     fabric.frameBitsPerRow,
                     tile.globalConfigBits,
                 )
@@ -132,7 +144,7 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
                 logger.info(f"No config memory for {tile.name}.")
                 configMemList = []
 
-            encodeDict = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
+            encodeDict = [-1] * (logical_frames * fabric.frameBitsPerRow)
             maskDic = {}
             for cfm in configMemList:
                 maskDic[cfm.frameIndex] = cfm.usedBitMask
@@ -145,7 +157,7 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
                         ) + fabric.frameBitsPerRow * cfm.frameIndex
 
             # filling the maskDic with the unused frames
-            for i in range(fabric.maxFramesPerCol - len(configMemList)):
+            for i in range(logical_frames - len(configMemList)):
                 maskDic[len(configMemList) + i] = "0" * fabric.frameBitsPerRow
 
             specData["FrameMap"][tile.name] = maskDic
@@ -214,12 +226,12 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
 
         st_config_bits = super_tile.total_config_bits
 
-        st_encode_dict = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
+        st_encode_dict = [-1] * (logical_frames * fabric.frameBitsPerRow)
         st_mask_dic: dict[int, str] = {}
         if st_config_bits > 0:
             st_config_mem_list = parseConfigMem(
                 super_tile.tileDir.parent / f"{super_tile.name}_ConfigMem.csv",
-                fabric.maxFramesPerCol,
+                logical_frames,
                 fabric.frameBitsPerRow,
                 st_config_bits,
             )
