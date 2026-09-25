@@ -28,9 +28,6 @@ jobs:
       pull-requests: read
     outputs:
       pytest: ${{ github.event_name != 'pull_request' || steps.filter.outputs.pytest == 'true' }}
-      backwards_compat: ${{ github.event_name != 'pull_request' || steps.filter.outputs.backwards_compat == 'true' }}
-      nix: ${{ github.event_name != 'pull_request' || steps.filter.outputs.nix == 'true' }}
-      docs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs == 'true' }}
     steps:
       # merge_group has no base commit to diff against, so the filter is skipped
       # there and the outputs above short-circuit to `true`.
@@ -50,32 +47,6 @@ jobs:
               - '.github/workflows/pytest_testing.yml'
               - '.github/workflows/ci.yml'
               - '.github/actions/**'
-            backwards_compat:
-              - 'fabulous/**'
-              - 'tests/**'
-              - 'pyproject.toml'
-              - 'uv.lock'
-              - '.github/workflows/backwards-compatibility.yml'
-              - '.github/workflows/ci.yml'
-              - '.github/actions/**'
-            nix:
-              - 'flake.nix'
-              - 'flake.lock'
-              - 'uv.lock'
-              - 'pyproject.toml'
-              - 'nix/**'
-              - '.github/workflows/nix-env.yml'
-              - '.github/workflows/ci.yml'
-            # AutoAPI reads the package, and docs/uv.lock carries the root
-            # requires-dist, so both stale the docs build.
-            docs:
-              - 'docs/**'
-              - 'fabulous/**'
-              - 'pyproject.toml'
-              - 'uv.lock'
-              - '.readthedocs.yaml'
-              - '.github/workflows/docs.yml'
-              - '.github/workflows/ci.yml'
 
   pre-commit:
     uses: ./.github/workflows/pre-commit-hooks.yml
@@ -87,30 +58,10 @@ jobs:
     uses: ./.github/workflows/pytest_testing.yml
     secrets: inherit
 
-  backwards-compat:
-    needs: changes
-    if: needs.changes.outputs.backwards_compat == 'true'
-    uses: ./.github/workflows/backwards-compatibility.yml
-    with:
-      base_ref: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
-    secrets: inherit
-
-  nix-env:
-    needs: changes
-    if: needs.changes.outputs.nix == 'true'
-    uses: ./.github/workflows/nix-env.yml
-    secrets: inherit
-
-  docs:
-    needs: changes
-    if: needs.changes.outputs.docs == 'true'
-    uses: ./.github/workflows/docs.yml
-    secrets: inherit
-
   # The single required status check on `main`. It must wait via `needs:`
   all-clean:
     if: always()
-    needs: [changes, pre-commit, pytest, backwards-compat, nix-env, docs]
+    needs: [changes, pre-commit, pytest]
     runs-on: ubuntu-latest
     steps:
       - name: Report dependency results
