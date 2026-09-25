@@ -5,6 +5,7 @@ generation, bitstream creation, simulation execution, and GUI commands.
 """
 
 import os
+from dataclasses import replace
 import tkinter as tk
 from decimal import Decimal
 from pathlib import Path
@@ -13,7 +14,15 @@ import pytest
 from pytest_mock import MockerFixture
 
 from fabulous.custom_exception import CommandError
+from fabulous.fabric_definition.configmem import empty_config_mem
+from fabulous.fabric_definition.define import ConfigBitMode
+from fabulous.fabric_definition.switch_matrix import SwitchMatrix
+from fabulous.fabric_definition.tile import Tile
+from fabulous.fabric_generator.gds_generator.formats import CONFIG_MEM_FORMAT
 from fabulous.fabric_generator.gds_generator.steps.tile_area_opt import OptMode
+from fabulous.fabric_generator.gds_generator.variables import (
+    CONFIG_MAPPING_VARIABLE,
+)
 from fabulous.fabric_generator.parser.parse_switchmatrix import parseList
 from fabulous.fabulous_repl.cmd_macro import _resolve_directional_fix
 from fabulous.fabulous_repl.fabulous_repl import FABulousREPL
@@ -43,6 +52,17 @@ def test_gen_config_mem(cli: FABulousREPL, caplog: pytest.LogCaptureFixture) -> 
     log = normalize_and_check_for_errors(caplog.text)
     assert f"Generating Config Memory for {TILE}" in log[0]
     assert "ConfigMem generation complete" in log[-1]
+
+
+def test_gen_config_mem_for_a_supertile(
+    cli: FABulousREPL, mocker: MockerFixture
+) -> None:
+    """A supertile's bits sit in its master's free crosspoints, so it has a memory."""
+    generate = mocker.patch.object(cli.fabulousAPI, "gen_super_tile_config_mem")
+
+    run_cmd(cli, "gen_config_mem DSP")
+
+    generate.assert_called_once_with("DSP")
 
 
 def test_gen_switch_matrix(cli: FABulousREPL, caplog: pytest.LogCaptureFixture) -> None:
@@ -124,12 +144,122 @@ def test_gen_tile_aborts_on_sub_command_failure(
     mocker.patch.object(
         cli.fabulousAPI, "genSwitchMatrix", side_effect=RuntimeError("boom")
     )
-    gen_config_mem = mocker.patch.object(cli.fabulousAPI, "genConfigMem")
+    gen_config_mem = mocker.patch(
+        "fabulous.fabulous_repl.cmd_fabric_gen.generate_tile_config_mem"
+    )
 
     run_cmd(cli, f"gen_tile {TILE}")
 
     assert cli.exit_code != 0, "gen_tile must report the failed sub-command"
     gen_config_mem.assert_not_called()
+
+
+@pytest.fixture
+def chain_cli(cli: FABulousREPL) -> FABulousREPL:
+    """A REPL on a FLIPFLOP_CHAIN fabric, with the empty memories the parser gives."""
+    cli.fabulousAPI.fabric.configBitMode = ConfigBitMode.FLIPFLOP_CHAIN
+    for tile in cli.fabulousAPI.fabric.tileDic.values():
+        tile.config_mem = empty_config_mem(tile.config_mem.source)
+    for super_tile in cli.fabulousAPI.fabric.superTileDic.values():
+        super_tile.config_mem = empty_config_mem(super_tile.config_mem.source)
+    return cli
+
+
+def test_a_chain_fabric_has_no_config_mem_to_generate(
+    chain_cli: FABulousREPL, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Asked for a mapping a chain fabric does not have, the command says so."""
+    run_cmd(chain_cli, f"gen_config_mem {TILE}")
+
+    assert "no configuration memory to generate" in caplog.text
+
+
+@pytest.mark.parametrize("tile", [TILE, "DSP"])
+def test_a_chain_fabric_generates_a_tile_without_a_mapping(
+    chain_cli: FABulousREPL, mocker: MockerFixture, tile: str
+) -> None:
+    """`gen_tile` on a chain fabric skips the configuration memory."""
+    generate = mocker.patch(
+        "fabulous.fabulous_repl.cmd_fabric_gen.generate_tile_config_mem"
+    )
+    super_tile = mocker.patch.object(chain_cli.fabulousAPI, "gen_super_tile_config_mem")
+
+    run_cmd(chain_cli, f"gen_tile {tile}")
+
+    assert chain_cli.exit_code == 0
+    generate.assert_not_called()
+    super_tile.assert_not_called()
+
+
+def test_a_supertile_with_no_bits_of_its_own_needs_no_master_mapping(
+    chain_cli: FABulousREPL,
+) -> None:
+    """A supertile with no bits of its own does not read its master's mapping."""
+    super_tile = chain_cli.fabulousAPI.fabric.superTileDic["DSP"]
+    memory = super_tile.config_mem
+
+    chain_cli.fabulousAPI.gen_super_tile_config_mem("DSP")
+
+    assert super_tile.config_mem is memory
+
+
+def test_an_unused_supertile_still_finds_its_master(cli: FABulousREPL) -> None:
+    """An unused supertile's master is found among the unused tiles."""
+    fabric = cli.fabulousAPI.fabric
+    super_tile = fabric.superTileDic.pop("DSP")
+    fabric.unusedSuperTileDic["DSP"] = super_tile
+    for child in super_tile.tiles:
+        fabric.unusedTileDic[child.name] = fabric.tileDic.pop(child.name)
+    super_tile.switch_matrix = SwitchMatrix(
+        matrix_file=super_tile.directory / "DSP_switch_matrix.list",
+        connections={},
+        hdl_config_bits=4,
+    )
+
+    # Reaching the mapping check at all is the point; the master is ungenerated.
+    with pytest.raises(ValueError, match="Generate its mapping before"):
+        cli.fabulousAPI.gen_super_tile_config_mem("DSP")
+
+
+def test_a_supertile_will_not_borrow_from_an_ungenerated_master(
+    cli: FABulousREPL,
+) -> None:
+    """A supertile mapping is refused until its master's mapping exists."""
+    super_tile = cli.fabulousAPI.fabric.superTileDic["DSP"]
+    # The demo supertile has no bits of its own.
+    super_tile.switch_matrix = SwitchMatrix(
+        matrix_file=super_tile.directory / "DSP_switch_matrix.list",
+        connections={},
+        hdl_config_bits=4,
+    )
+
+    with pytest.raises(ValueError, match="Generate its mapping before"):
+        cli.fabulousAPI.gen_super_tile_config_mem("DSP")
+
+
+def test_a_tile_generates_into_its_own_directory(cli: FABulousREPL) -> None:
+    """A tile outside `Tile/<name>` generates all its files into its own directory."""
+    tile = cli.fabulousAPI.fabric.tileDic[TILE]
+    elsewhere = cli.projectDir / "elsewhere"
+    elsewhere.mkdir()
+    tile.tileDir = elsewhere / f"{TILE}.csv"
+
+    run_cmd(cli, f"gen_tile {TILE}")
+
+    for name in (f"{TILE}_switch_matrix", f"{TILE}_ConfigMem", TILE):
+        assert (elsewhere / f"{name}.{cli.extension}").is_file()
+
+
+def test_a_stray_directory_does_not_make_a_tile_a_supertile(
+    cli: FABulousREPL,
+) -> None:
+    """A stray subdirectory does not make a tile a supertile."""
+    (cli.projectDir / "Tile" / TILE / "stray").mkdir()
+
+    run_cmd(cli, f"gen_tile {TILE}")
+
+    assert cli.exit_code == 0
+    assert (cli.projectDir / "Tile" / TILE / f"{TILE}.{cli.extension}").is_file()
 
 
 def test_gen_fabric(cli: FABulousREPL, caplog: pytest.LogCaptureFixture) -> None:
@@ -643,6 +773,176 @@ class TestGenMacroTileFlags:
             gen_macro.call_args.kwargs["custom_config_overrides"]["DIODE_ON_PORTS"]
             == "both"
         )
+
+
+_SEARCH = "fabulous.fabric_generator.gds_generator.flows.placement_opt_flow"
+
+
+def patch_placement_search(
+    mocker: MockerFixture,
+    views: dict[object, Path] | None = None,
+) -> MockerFixture:
+    """Stand in for the optimisation flow, exporting the given views.
+
+    Parameters
+    ----------
+    mocker : MockerFixture
+        The patcher.
+    views : dict[object, Path] | None
+        The views the winning iteration exported, keyed by format.
+
+    Returns
+    -------
+    MockerFixture
+        The patched flow class, so a test can read the config it was built with.
+    """
+    mocker.patch(f"{_SEARCH}.is_pdk_config_set", return_value=True)
+    state = mocker.MagicMock()
+    state.get.side_effect = lambda fmt: (views or {}).get(fmt)
+    flow_cls = mocker.patch(f"{_SEARCH}.FABulousTileVerilogPlacementOptFlow")
+    flow_cls.return_value.start.return_value = state
+    return flow_cls
+
+
+class TestGenConfigMemFromPlacement:
+    """`gen_config_mem --opt-config-mapping` maps from the placement it searches."""
+
+    def _moved_mapping(self, cli: FABulousREPL, tmp_path: Path) -> tuple[Path, dict]:
+        """Return a won CSV whose mapping cannot be mistaken for the tile's own."""
+        tile_obj = cli.fabulousAPI.getTile(TILE)
+        assert isinstance(tile_obj, Tile)
+        before = tile_obj.config_mem
+        moved = dict(before.bit_at)
+        crosspoint, bit = next(iter(sorted(moved.items())))
+        del moved[crosspoint]
+        moved[before.free_crosspoints[0]] = bit
+        won = tmp_path / "won_ConfigMem.csv"
+        replace(before.rebuilt_with(moved), source=won).to_csv()
+        return won, moved
+
+    def test_without_the_flag_no_search_runs(
+        self, cli: FABulousREPL, mocker: MockerFixture
+    ) -> None:
+        flow_cls = patch_placement_search(mocker)
+
+        run_cmd(cli, f"gen_config_mem {TILE}")
+
+        flow_cls.assert_not_called()
+
+    def test_the_flag_searches_only_the_config_mapping(
+        self, cli: FABulousREPL, mocker: MockerFixture
+    ) -> None:
+        flow_cls = patch_placement_search(mocker)
+
+        run_cmd(cli, f"gen_config_mem {TILE} --opt-config-mapping")
+
+        kwargs = flow_cls.call_args.kwargs
+        assert kwargs[CONFIG_MAPPING_VARIABLE.name] is True
+
+    def test_the_searched_mapping_lands_beside_the_tile_own(
+        self, cli: FABulousREPL, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """The mapping the tile was hardened against is not written over."""
+        tile_obj = cli.fabulousAPI.getTile(TILE)
+        assert isinstance(tile_obj, Tile)
+        original = tile_obj.config_mem.source
+        original_text = original.read_text()
+        won, moved = self._moved_mapping(cli, tmp_path)
+        patch_placement_search(mocker, {CONFIG_MEM_FORMAT: won})
+
+        run_cmd(cli, f"gen_config_mem {TILE} --opt-config-mapping")
+
+        searched = original.parent / f"{TILE}_ConfigMem_opt.csv"
+        assert tile_obj.config_mem.source == searched
+        assert searched.read_text() == won.read_text()
+        assert tile_obj.config_mem.bit_at == moved
+        assert original.read_text() == original_text
+
+    def test_the_tile_definition_names_the_searched_mapping(
+        self, cli: FABulousREPL, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """The CONFIGMEM entry moves, so a reparse reads what was generated."""
+        won, moved = self._moved_mapping(cli, tmp_path)
+        patch_placement_search(mocker, {CONFIG_MEM_FORMAT: won})
+        tile_obj = cli.fabulousAPI.getTile(TILE)
+        assert isinstance(tile_obj, Tile)
+
+        run_cmd(cli, f"gen_config_mem {TILE} --opt-config-mapping")
+
+        assert f"CONFIGMEM,./{TILE}_ConfigMem_opt.csv" in tile_obj.tileDir.read_text()
+
+    def test_the_module_keeps_the_tile_name(
+        self, cli: FABulousREPL, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """A renamed mapping must not leave two files declaring one module."""
+        won, _ = self._moved_mapping(cli, tmp_path)
+        patch_placement_search(mocker, {CONFIG_MEM_FORMAT: won})
+        tile_obj = cli.fabulousAPI.getTile(TILE)
+        assert isinstance(tile_obj, Tile)
+        tile_dir = tile_obj.config_mem.source.parent
+
+        run_cmd(cli, f"gen_config_mem {TILE} --opt-config-mapping")
+
+        assert (tile_dir / f"{TILE}_ConfigMem.v").is_file()
+        assert not (tile_dir / f"{TILE}_ConfigMem_opt.v").exists()
+
+    def test_every_named_tile_is_searched(
+        self, cli: FABulousREPL, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        won, _ = self._moved_mapping(cli, tmp_path)
+        flow_cls = patch_placement_search(mocker, {CONFIG_MEM_FORMAT: won})
+
+        run_cmd(cli, f"gen_config_mem {TILE} RegFile --opt-config-mapping")
+
+        searched = [call.args[0].name for call in flow_cls.call_args_list]
+        assert searched == [TILE, "RegFile"]
+
+    def test_a_chain_fabric_is_refused_before_the_search(
+        self,
+        cli: FABulousREPL,
+        mocker: MockerFixture,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A daisy chain has no crosspoints, so there is nothing to search.
+
+        The command refuses on the fabric's mode, before the tile is read at
+        all, since a chain tile carries the same empty memory as an
+        ungenerated frame-based one.
+        """
+        flow_cls = patch_placement_search(mocker)
+        cli.fabulousAPI.fabric.configBitMode = ConfigBitMode.FLIPFLOP_CHAIN
+
+        run_cmd(cli, f"gen_config_mem {TILE} --opt-config-mapping")
+
+        assert "no configuration memory to generate" in caplog.text
+        flow_cls.assert_not_called()
+
+    def test_a_refused_search_generates_nothing(
+        self,
+        cli: FABulousREPL,
+        mocker: MockerFixture,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        patch_placement_search(mocker)
+        generate = mocker.patch(
+            "fabulous.fabulous_repl.cmd_fabric_gen.generate_tile_config_mem"
+        )
+
+        run_cmd(cli, f"gen_config_mem {TILE} --opt-config-mapping")
+
+        assert "nothing to generate from" in caplog.text
+        generate.assert_not_called()
+
+    def test_a_supertile_is_not_searched(
+        self, cli: FABulousREPL, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The search reads one tile's placement, so a supertile is refused."""
+        flow_cls = patch_placement_search(mocker)
+
+        run_cmd(cli, "gen_config_mem DSP --opt-config-mapping")
+
+        assert "searches the placement of one tile" in caplog.text
+        flow_cls.assert_not_called()
 
 
 class TestGenMacroFullForwarding:
