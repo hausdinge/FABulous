@@ -175,6 +175,36 @@ class TestUserCLKDirection:
             parseFabricCSV(str(self._set_direction(project, "UP")))
 
 
+class TestIncludeBorderRows:
+    """`IncludeBorderRows` sets `Fabric.includeBorderRows`; absent means auto."""
+
+    @staticmethod
+    def _set_value(project: Path, value: str) -> Path:
+        csv = project / "fabric.csv"
+        csv.write_text(
+            csv.read_text().replace(
+                "ParametersBegin,", f"ParametersBegin,\nIncludeBorderRows,{value},", 1
+            )
+        )
+        return csv
+
+    @pytest.mark.parametrize(("value", "expected"), [("TRUE", True), ("FALSE", False)])
+    def test_value_is_parsed(self, project: Path, value: str, expected: bool) -> None:
+        init_context(project)
+        fabric = parseFabricCSV(str(self._set_value(project, value)))
+        assert fabric.includeBorderRows is expected
+
+    def test_default_is_auto(self, project: Path) -> None:
+        init_context(project)
+        fabric = parseFabricCSV(str(project / "fabric.csv"))
+        assert fabric.includeBorderRows is None
+
+    def test_invalid_value_raises(self, project: Path) -> None:
+        init_context(project)
+        with pytest.raises(InvalidFabricParameter, match="IncludeBorderRows"):
+            parseFabricCSV(str(self._set_value(project, "yes")))
+
+
 @pytest.mark.parametrize("prefix", ["", "MUL_"])
 def test_supertile_bel_add_as_custom_prim(project: Path, prefix: str) -> None:
     """A supertile BEL flagged `ADD_AS_CUSTOM_PRIM` lands in `custom_prims.v`."""

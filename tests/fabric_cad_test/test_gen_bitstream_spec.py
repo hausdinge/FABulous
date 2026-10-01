@@ -92,6 +92,31 @@ def test_border_rows_have_config_bits_interior_ignored() -> None:
     assert border_rows_have_config_bits(fabric) is False
 
 
+@pytest.mark.parametrize(
+    ("grid", "override", "expected"),
+    [
+        ([[0, 0], [127, 127], [0, 0]], True, True),  # forced on without bits
+        ([[0, 0], [127, 127], [0, 0]], False, False),
+        ([[5, 0], [127, 127], [0, 0]], True, True),
+    ],
+)
+def test_border_rows_override(
+    grid: list[list[int | None]], override: bool, expected: bool
+) -> None:
+    """An explicit `IncludeBorderRows` replaces the detected value."""
+    fabric = _fabric_from_bits(grid)
+    fabric.includeBorderRows = override
+    assert border_rows_have_config_bits(fabric) is expected
+
+
+def test_border_rows_override_off_with_bits_raises() -> None:
+    """Forcing border rows off while a border tile has config bits fails."""
+    fabric = _fabric_from_bits([[5, 0], [127, 127], [0, 0]])
+    fabric.includeBorderRows = False
+    with pytest.raises(ValueError, match="IncludeBorderRows is FALSE"):
+        border_rows_have_config_bits(fabric)
+
+
 @pytest.fixture
 def generated_fabric(cli: FABulousREPL) -> Fabric:
     """Return the fully generated demo fabric bound to the CLI fixture."""
