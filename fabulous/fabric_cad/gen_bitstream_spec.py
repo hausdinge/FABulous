@@ -7,12 +7,16 @@ locations and is used during bitstream generation.
 
 import string
 from importlib.metadata import version
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from fabulous.fabric_definition.configmem import ConfigMem
-from fabulous.fabric_definition.define import ConfigBitMode
 from fabulous.fabric_definition.fabric import Fabric
+from fabulous.fabric_generator.parser.parse_configmem import parseConfigMem
+from fabulous.fabulous_settings import get_context
+
+if TYPE_CHECKING:
+    from fabulous.fabric_definition.configmem import ConfigMem
 
 
 def border_rows_have_config_bits(fabric: Fabric) -> bool:
@@ -39,39 +43,12 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
     )
 
 
-def bit_positions(memory: ConfigMem, fabric: Fabric) -> list[int]:
-    """Give the bitstream position of each configuration bit.
-
-    A position is `data_bit + frame * FrameBitsPerRow`. Bits the memory does
-    not hold keep -1, which `bit_gen` reads as unmapped.
-
-    Parameters
-    ----------
-    memory : ConfigMem
-        The mapping to read.
-    fabric : Fabric
-        The fabric whose frame grid the positions are counted over.
-
-    Returns
-    -------
-    list[int]
-        The position of every bit of the grid, indexed by configuration bit.
-    """
-    positions = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
-    for crosspoint, bit in memory.bit_at.items():
-        positions[bit] = crosspoint.data_bit + fabric.frameBitsPerRow * crosspoint.frame
-    return positions
-
-
-def generate_bitstream_spec(fabric: Fabric) -> dict[str, dict]:
+def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
     """Generate the fabric's bitstream specification.
 
     This is needed to tell where each FASM configuration is mapped to the physical
     bitstream
     The result file will be further parsed by `bit_gen.py`.
-
-    A FLIPFLOP_CHAIN fabric has no frames, so its specification carries only
-    the tile map and the architecture parameters.
 
     Parameters
     ----------
@@ -82,14 +59,8 @@ def generate_bitstream_spec(fabric: Fabric) -> dict[str, dict]:
     -------
     dict[str, dict]
         The bits stream specification of the fabric.
-
-    Raises
-    ------
-    ValueError
-        If a tile's or supertile's configuration memory holds a different number
-        of bits than it has, which is how an ungenerated mapping shows.
     """
-    spec_data = {
+    specData = {
         "TileMap": {},
         "TileSpecs": {},
         "TileSpecs_No_Mask": {},
@@ -107,93 +78,128 @@ def generate_bitstream_spec(fabric: Fabric) -> dict[str, dict]:
         },
     }
 
-    tile_map = {}
+    tileMap = {}
     for y, row in enumerate(fabric.tile):
         for x, tile in enumerate(row):
             if tile is not None:
-                tile_map[f"X{x}Y{y}"] = tile.name
+                tileMap[f"X{x}Y{y}"] = tile.name
             else:
-                tile_map[f"X{x}Y{y}"] = "NULL"
+                tileMap[f"X{x}Y{y}"] = "NULL"
 
-    spec_data["TileMap"] = tile_map
-    if fabric.configBitMode is not ConfigBitMode.FRAME_BASED:
-        logger.warning(
-            f"{fabric.name} shifts its configuration through a daisy chain, "
-            "so its bitstream specification carries no frame map"
-        )
-        return spec_data
-
+    specData["TileMap"] = tileMap
+    configMemList: list[ConfigMem] = []
     for y, row in enumerate(fabric.tile):
         for x, tile in enumerate(row):
             if tile is None:
                 continue
-            if tile.globalConfigBits == 0:
-                # Every pip of such a tile is single-sink, so no position is read.
-                logger.info(f"No config memory for X{x}Y{y}_{tile.name}.")
-                spec_data["FrameMap"][tile.name] = {}
-                spec_data["FrameMapEncode"][tile.name] = {}
-                positions = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
-            else:
-                # Grid cells are deep copies; the memory lives on the tile type.
-                memory = fabric.tileDic[tile.name].config_mem
-                if memory.config_bits != tile.globalConfigBits:
-                    raise ValueError(
-                        f"{tile.name} holds {memory.config_bits} configuration "
-                        f"bits in {memory} for {tile.globalConfigBits} bits."
+            if "fabric.csv" in str(tile.tileDir):
+                # Backward compat: in the old fabric.csv-embedded layout the
+                # tile's real location comes from its switch-matrix file path.
+                matrix_file = tile.switch_matrix.matrix_file
+                if matrix_file.is_file():
+                    configMemPath = matrix_file.parent / f"{tile.name}_ConfigMem.csv"
+                else:
+                    configMemPath = (
+                        get_context().proj_dir
+                        / "Tile"
+                        / tile.name
+                        / f"{tile.name}_ConfigMem.csv"
                     )
+                    logger.warning(
+                        f"MatrixDir for {tile.name} is not a valid file or directory. "
+                        f"Assuming default path: {configMemPath}"
+                    )
+            else:
+                configMemPath = tile.tileDir.parent.joinpath(
+                    f"{tile.name}_ConfigMem.csv"
+                )
+            logger.info(f"ConfigMemPath: {configMemPath}")
 
-                positions = bit_positions(memory, fabric)
-                spec_data["FrameMap"][tile.name] = {
-                    frame.frame_index: frame.used_bits_mask.to01()
-                    for frame in memory.frames
-                }
+            if configMemPath.exists() and configMemPath.is_file():
+                configMemList = parseConfigMem(
+                    configMemPath,
+                    fabric.maxFramesPerCol,
+                    fabric.frameBitsPerRow,
+                    tile.globalConfigBits,
+                )
+            elif tile.globalConfigBits > 0:
+                logger.critical(
+                    f"No ConfigMem csv file found for {tile.name} which "
+                    "have config bits"
+                )
+                configMemList = []
+            else:
+                logger.info(f"No config memory for {tile.name}.")
+                configMemList = []
 
-            bit_offset = 0
-            tile_specs = {}
-            tile_specs_no_mask = {}
+            encodeDict = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
+            maskDic = {}
+            for cfm in configMemList:
+                maskDic[cfm.frameIndex] = cfm.usedBitMask
+                # matching the value in the configBitRanges with the reversedBitMask
+                # bit 0 in bit mask is the first value in the configBitRanges
+                for i, char in enumerate(cfm.usedBitMask):
+                    if char == "1":
+                        encodeDict[cfm.configBitRanges.pop(0)] = (
+                            fabric.frameBitsPerRow - 1 - i
+                        ) + fabric.frameBitsPerRow * cfm.frameIndex
+
+            # filling the maskDic with the unused frames
+            for i in range(fabric.maxFramesPerCol - len(configMemList)):
+                maskDic[len(configMemList) + i] = "0" * fabric.frameBitsPerRow
+
+            specData["FrameMap"][tile.name] = maskDic
+            if tile.globalConfigBits == 0:
+                logger.info(f"No config memory for X{x}Y{y}_{tile.name}.")
+                specData["FrameMap"][tile.name] = {}
+                specData["FrameMapEncode"][tile.name] = {}
+
+            curBitOffset = 0
+            curTileMap = {}
+            curTileMapNoMask = {}
 
             for i, bel in enumerate(tile.bels):
-                for feature, feature_bits in bel.belFeatureMap.items():
-                    for entry in (k for k in feature_bits if isinstance(k, int)):
-                        for v in feature_bits[entry]:
-                            tile_specs[f"{string.ascii_uppercase[i]}.{feature}"] = {
-                                positions[bit_offset + v]: feature_bits[entry][v]
+                for featureKey, keyDict in bel.belFeatureMap.items():
+                    for entry in (k for k in keyDict if isinstance(k, int)):
+                        for v in keyDict[entry]:
+                            curTileMap[f"{string.ascii_uppercase[i]}.{featureKey}"] = {
+                                encodeDict[curBitOffset + v]: keyDict[entry][v]
                             }
-                            tile_specs_no_mask[
-                                f"{string.ascii_uppercase[i]}.{feature}"
-                            ] = {positions[bit_offset + v]: feature_bits[entry][v]}
-                        bit_offset += len(feature_bits[entry])
+                            curTileMapNoMask[
+                                f"{string.ascii_uppercase[i]}.{featureKey}"
+                            ] = {encodeDict[curBitOffset + v]: keyDict[entry][v]}
+                        curBitOffset += len(keyDict[entry])
 
             result = tile.switch_matrix.connections
-            for source, sinks in result.items():
-                control_width = 0
-                for i, sink in enumerate(reversed(sinks)):
-                    control_width = (len(sinks) - 1).bit_length()
-                    control_value = f"{len(sinks) - 1 - i:0{control_width}b}"
+            for source, sinkList in result.items():
+                controlWidth = 0
+                for i, sink in enumerate(reversed(sinkList)):
+                    controlWidth = (len(sinkList) - 1).bit_length()
+                    controlValue = f"{len(sinkList) - 1 - i:0{controlWidth}b}"
                     pip = f"{sink}.{source}"
-                    if len(sinks) < 2:
-                        tile_specs[pip] = {}
-                        tile_specs_no_mask[pip] = {}
+                    if len(sinkList) < 2:
+                        curTileMap[pip] = {}
+                        curTileMapNoMask[pip] = {}
                         continue
 
-                    for c, char in enumerate(control_value[::-1]):
-                        if pip not in tile_specs:
-                            tile_specs[pip] = {}
-                            tile_specs_no_mask[pip] = {}
+                    for c, curChar in enumerate(controlValue[::-1]):
+                        if pip not in curTileMap:
+                            curTileMap[pip] = {}
+                            curTileMapNoMask[pip] = {}
 
-                        tile_specs[pip][positions[bit_offset + c]] = char
-                        tile_specs_no_mask[pip][positions[bit_offset + c]] = char
+                        curTileMap[pip][encodeDict[curBitOffset + c]] = curChar
+                        curTileMapNoMask[pip][encodeDict[curBitOffset + c]] = curChar
 
-                bit_offset += control_width
+                curBitOffset += controlWidth
 
             # And now we add empty config bit mappings for immutable connections
             # (i.e. wires), as nextpnr sees these the same as normal pips
             for wire in tile.wireList:
-                tile_specs[f"{wire.source}.{wire.destination}"] = {}
-                tile_specs_no_mask[f"{wire.source}.{wire.destination}"] = {}
+                curTileMap[f"{wire.source}.{wire.destination}"] = {}
+                curTileMapNoMask[f"{wire.source}.{wire.destination}"] = {}
 
-            spec_data["TileSpecs"][f"X{x}Y{y}"] = tile_specs
-            spec_data["TileSpecs_No_Mask"][f"X{x}Y{y}"] = tile_specs_no_mask
+            specData["TileSpecs"][f"X{x}Y{y}"] = curTileMap
+            specData["TileSpecs_No_Mask"][f"X{x}Y{y}"] = curTileMapNoMask
 
     # Supertile bitstream features. A supertile's config bits physically live in
     # its master tile's frame column (the master tile's own ConfigMem leaves those
@@ -208,26 +214,22 @@ def generate_bitstream_spec(fabric: Fabric) -> dict[str, dict]:
 
         st_config_bits = super_tile.total_config_bits
 
-        st_positions = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
-        st_frame_map: dict[int, str] = {}
+        st_encode_dict = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
+        st_mask_dic: dict[int, str] = {}
         if st_config_bits > 0:
-            st_memory = super_tile.config_mem
-            if st_memory is None:
-                raise ValueError(
-                    f"Supertile {super_tile.name} was built without a "
-                    "configuration memory."
-                )
-            if st_memory.config_bits != st_config_bits:
-                raise ValueError(
-                    f"Supertile {super_tile.name} has {st_config_bits} config bits "
-                    f"but {st_memory} holds {st_memory.config_bits}; run "
-                    "gen_config_mem for it first."
-                )
-            st_frame_map = {
-                frame.frame_index: frame.used_bits_mask.to01()
-                for frame in st_memory.used_frames
-            }
-            st_positions = bit_positions(st_memory, fabric)
+            st_config_mem_list = parseConfigMem(
+                super_tile.tileDir.parent / f"{super_tile.name}_ConfigMem.csv",
+                fabric.maxFramesPerCol,
+                fabric.frameBitsPerRow,
+                st_config_bits,
+            )
+            for cfm in st_config_mem_list:
+                st_mask_dic[cfm.frameIndex] = cfm.usedBitMask
+                for i, char in enumerate(cfm.usedBitMask):
+                    if char == "1":
+                        st_encode_dict[cfm.configBitRanges.pop(0)] = (
+                            fabric.frameBitsPerRow - 1 - i
+                        ) + fabric.frameBitsPerRow * cfm.frameIndex
 
         sm_connections: dict[str, list[str]] = {}
         if super_tile.switch_matrix is not None:
@@ -240,55 +242,55 @@ def generate_bitstream_spec(fabric: Fabric) -> dict[str, dict]:
             fty = base_fy + ty_local
             master_tile = fabric.tile[fty][ftx]
 
-            frame_map = spec_data["FrameMap"].setdefault(master_tile.name, {})
-            for frame_idx, mask in st_frame_map.items():
+            frame_map = specData["FrameMap"].setdefault(master_tile.name, {})
+            for frame_idx, mask in st_mask_dic.items():
                 existing = frame_map.get(frame_idx, "0" * fabric.frameBitsPerRow)
                 frame_map[frame_idx] = "".join(
                     "1" if a == "1" or b == "1" else "0"
                     for a, b in zip(existing, mask, strict=True)
                 )
 
-            tile_specs = spec_data["TileSpecs"].setdefault(f"X{ftx}Y{fty}", {})
-            tile_specs_no_mask = spec_data["TileSpecs_No_Mask"].setdefault(
+            curTileMap = specData["TileSpecs"].setdefault(f"X{ftx}Y{fty}", {})
+            curTileMapNoMask = specData["TileSpecs_No_Mask"].setdefault(
                 f"X{ftx}Y{fty}", {}
             )
 
-            bit_offset = 0
-            for source, sinks in sm_connections.items():
-                control_width = (len(sinks) - 1).bit_length()
+            curBitOffset = 0
+            for source, sinkList in sm_connections.items():
+                controlWidth = (len(sinkList) - 1).bit_length()
                 if st_config_bits == 0:
                     # No config bits — all connections are passthrough.
-                    for sink in sinks:
-                        for t in (tile_specs, tile_specs_no_mask):
+                    for sink in sinkList:
+                        for t in (curTileMap, curTileMapNoMask):
                             t[f"{sink}.{source}"] = {}
                     continue
-                for i, sink in enumerate(reversed(sinks)):
+                for i, sink in enumerate(reversed(sinkList)):
                     pip = f"{sink}.{source}"
-                    if len(sinks) < 2:
-                        for t in (tile_specs, tile_specs_no_mask):
+                    if len(sinkList) < 2:
+                        for t in (curTileMap, curTileMapNoMask):
                             t[pip] = {}
                         continue
-                    control_value = f"{len(sinks) - 1 - i:0{control_width}b}"
-                    for c, char in enumerate(control_value[::-1]):
-                        for t in (tile_specs, tile_specs_no_mask):
+                    controlValue = f"{len(sinkList) - 1 - i:0{controlWidth}b}"
+                    for c, curChar in enumerate(controlValue[::-1]):
+                        for t in (curTileMap, curTileMapNoMask):
                             t.setdefault(pip, {})
-                            t[pip][st_positions[bit_offset + c]] = char
-                bit_offset += control_width
+                            t[pip][st_encode_dict[curBitOffset + c]] = curChar
+                curBitOffset += controlWidth
 
             bel_coord = (ftx, fty)
             bel_offset = len(master_tile.bels) + st_bel_count.get(bel_coord, 0)
             for i, bel in enumerate(super_tile.bels):
                 letter = string.ascii_uppercase[bel_offset + i]
-                for feature, feature_bits in bel.belFeatureMap.items():
-                    for entry in feature_bits:
+                for featureKey, keyDict in bel.belFeatureMap.items():
+                    for entry in keyDict:
                         if not isinstance(entry, int):
                             continue
-                        for v in feature_bits[entry]:
-                            for t in (tile_specs, tile_specs_no_mask):
-                                t[f"{letter}.{feature}"] = {
-                                    st_positions[bit_offset + v]: feature_bits[entry][v]
+                        for v in keyDict[entry]:
+                            for t in (curTileMap, curTileMapNoMask):
+                                t[f"{letter}.{featureKey}"] = {
+                                    st_encode_dict[curBitOffset + v]: keyDict[entry][v]
                                 }
-                        bit_offset += len(feature_bits[entry])
+                        curBitOffset += len(keyDict[entry])
             st_bel_count[bel_coord] = bel_offset + len(super_tile.bels)
 
-    return spec_data
+    return specData

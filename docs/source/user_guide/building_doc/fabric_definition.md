@@ -662,19 +662,8 @@ BEL,              LUT4.vhdl,       LA_
 BEL,              LUT4.vhdl,       LB_
 ...
 MATRIX,           LUT4AB_switch_matrix.vhdl
-CONFIGMEM,        LUT4AB_ConfigMem.csv
 EndTILE
 ```
-
-A `CONFIGMEM` line names the file holding the tile's configuration memory mapping,
-resolved relative to the tile CSV. `gen_config_mem` writes that file, and the parser
-reads it once into the tile, so every later command works from the tile's mapping
-rather than rereading the file. A tile without the line keeps its mapping in its own
-directory under the name `<tile>_ConfigMem.csv`, which is where every project
-generated so far has it. The generated `<tile>_ConfigMem` module goes in that
-directory too, whatever `CONFIGMEM` names, because the tile's HDL is generated
-there. For the deprecated layout that declares tiles inside `fabric.csv`, where a
-tile owns no directory of its own, both follow the tile's switch matrix instead.
 
 A `BEL` statement can carry the additional keyword `ADD_AS_CUSTOM_PRIM`, which makes
 Yosys aware of the primitive. Whenever the tile is parsed, the BEL is added as a
@@ -1155,11 +1144,9 @@ frame9,9,32,1111_1111_1111_1111_1111_1111_1111_1111,397:394,401:398,405:402,409:
 ```
 
 The more important use case of bitstream remapping is to optimize the physical
-implementation of the configuration tiles. `gen_config_mem <tile>
---opt-config-mapping` rewrites this file from the placed tile so that every
-configuration latch sits on the frame crosspoint nearest to it, following Chung
-et al {cite}`10.1145/3490422.3502371`; see
-[Placement-driven configuration mapping](#placement-opt).
+implementation of the configuration tiles. FABulous includes a corresponding
+optimizer that generates the bitstream remapping files automatically. The
+process is described in detail in Chung et al {cite}`10.1145/3490422.3502371`.
 
 (supertiles)=
 

@@ -4,19 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from fabulous.custom_exception import (
-    InvalidFabricParameter,
-    InvalidPortType,
-    InvalidTileDefinition,
-)
-from fabulous.fabric_definition.define import IO, ConfigBitMode, Direction, Side
+from fabulous.custom_exception import InvalidFabricParameter, InvalidPortType
+from fabulous.fabric_definition.define import IO, Direction, Side
 from fabulous.fabric_generator.parser.parse_csv import (
     parse_port_line,
-    parse_tile_from_dir,
     parseFabricCSV,
     parseSupertilesCSV,
     parseTilesCSV,
-    set_config_mem_entry,
 )
 from fabulous.fabulous_settings import init_context
 
@@ -180,177 +174,6 @@ class TestUserCLKDirection:
         with pytest.raises(InvalidFabricParameter, match="UP"):
             parseFabricCSV(str(self._set_direction(project, "UP")))
 
-
-class TestConfigMemLocation:
-    """Where a parsed tile expects its `ConfigMem.csv` to be."""
-
-    @pytest.mark.parametrize(
-        ("row", "expected"),
-        [
-            pytest.param(None, "LUT4AB_ConfigMem.csv", id="derived"),
-            pytest.param(
-                "CONFIGMEM,./elsewhere/Mapping.csv",
-                "elsewhere/Mapping.csv",
-                id="declared",
-            ),
-        ],
-    )
-    def test_the_tile_names_its_mapping_file(
-        self, project: Path, row: str | None, expected: str
-    ) -> None:
-        """A CONFIGMEM line wins; without one the mapping sits beside the tile."""
-        tile_csv = project / "Tile/LUT4AB/LUT4AB.csv"
-        text = tile_csv.read_text()
-        if row is None:
-            text = "\n".join(
-                line for line in text.splitlines() if not line.startswith("CONFIGMEM,")
-            )
-        else:
-            text = "\n".join(
-                row if line.startswith("CONFIGMEM,") else line
-                for line in text.splitlines()
-            )
-        tile_csv.write_text(text + "\n")
-
-        init_context(project)
-        fabric = parseFabricCSV(str(project / "fabric.csv"))
-
-        source = fabric.tileDic["LUT4AB"].config_mem.source
-        assert source is not None
-        assert source == (project / "Tile/LUT4AB" / expected).absolute()
-
-
-@pytest.mark.parametrize(
-    ("mode", "maps_bits"),
-    [("frame_based", True), ("FlipFlopChain", False)],
-    ids=["frame_based", "flip_flop_chain"],
-)
-def test_only_a_frame_based_fabric_maps_its_configuration_bits(
-    project: Path, mode: str, maps_bits: bool
-) -> None:
-    """A chain fabric's tiles keep an empty memory."""
-    fabric_csv = project / "fabric.csv"
-    fabric_csv.write_text(
-        fabric_csv.read_text().replace(
-            "ConfigBitMode,frame_based,", f"ConfigBitMode,{mode},", 1
-        )
-    )
-
-    init_context(project)
-    fabric = parseFabricCSV(str(fabric_csv))
-
-    assert (fabric.tileDic["LUT4AB"].config_mem.config_bits > 0) is maps_bits
-
-
-def test_a_supertile_declared_in_the_fabric_csv_maps_into_its_own_directory(
-    project: Path,
-) -> None:
-    """A supertile declared in `fabric.csv` expects its mapping beside its children."""
-    init_context(project)
-    fabric_csv = project / "fabric.csv"
-    fabric = parseFabricCSV(str(fabric_csv))
-    fabric_csv.write_text(
-        fabric_csv.read_text()
-        + "\nSuperTILE,DSP_INLINE,\nDSP_top,\nDSP_bot,\nEndSuperTILE,\n"
-    )
-
-    (super_tile,) = parseSupertilesCSV(fabric_csv, fabric.tileDic)
-
-    assert super_tile.config_mem.source.parent == project / "Tile" / "DSP"
-
-
-def test_a_chain_tile_parsed_from_its_directory_ignores_a_stale_mapping(
-    project: Path,
-) -> None:
-    """A chain tile flow ignores a mapping left by a frame-based run."""
-    tile_dir = project / "Tile" / "LUT4AB"
-    (tile_dir / "LUT4AB_ConfigMem.csv").write_text("this is not a mapping\n")
-
-    init_context(project)
-    tile = parse_tile_from_dir(
-        tile_dir,
-        "LUT4AB",
-        False,
-        config_bit_mode=ConfigBitMode.FLIPFLOP_CHAIN,
-        frame_bits_per_row=32,
-        max_frames_per_col=20,
-    )
-
-    assert tile.config_mem.config_bits == 0
-
-
-@pytest.mark.parametrize(
-    "keep_row",
-    [True, False],
-    ids=["entry_rewritten", "entry_added_after_matrix"],
-)
-def test_set_config_mem_entry_points_a_tile_at_another_mapping(
-    project: Path, keep_row: bool
-) -> None:
-    """A tile that relied on the default name gains the entry it lacked."""
-    tile_csv = project / "Tile/LUT4AB/LUT4AB.csv"
-    if not keep_row:
-        tile_csv.write_text(
-            "\n".join(
-                line
-                for line in tile_csv.read_text().splitlines()
-                if not line.startswith("CONFIGMEM,")
-            )
-            + "\n"
-        )
-
-    set_config_mem_entry(
-        tile_csv, "LUT4AB", tile_csv.parent / "LUT4AB_ConfigMem_opt.csv"
-    )
-
-    rows = [
-        line
-        for line in tile_csv.read_text().splitlines()
-        if line.startswith("CONFIGMEM")
-    ]
-    assert rows == ["CONFIGMEM,./LUT4AB_ConfigMem_opt.csv"]
-
-    init_context(project)
-    fabric = parseFabricCSV(str(project / "fabric.csv"))
-    assert (
-        fabric.tileDic["LUT4AB"].config_mem.source
-        == (tile_csv.parent / "LUT4AB_ConfigMem_opt.csv").absolute()
-    )
-
-
-def test_set_config_mem_entry_rejects_a_tile_the_csv_does_not_define(
-    project: Path,
-) -> None:
-    tile_csv = project / "Tile/LUT4AB/LUT4AB.csv"
-    with pytest.raises(InvalidTileDefinition, match="defines no tile Nope"):
-        set_config_mem_entry(tile_csv, "Nope", tile_csv.parent / "X.csv")
-
-
-def test_set_config_mem_entry_touches_only_its_own_block(tmp_path: Path) -> None:
-    """The legacy layout defines every tile in one fabric.csv."""
-    fabric_csv = tmp_path / "fabric.csv"
-    fabric_csv.write_text(
-        "TILE,A\n"
-        "MATRIX,./A_switch_matrix.csv\n"
-        "CONFIGMEM,./A_ConfigMem.csv\n"
-        "EndTILE\n"
-        "TILE,B\n"
-        "MATRIX,./B_switch_matrix.csv\n"
-        "EndTILE\n"
-    )
-
-    set_config_mem_entry(fabric_csv, "B", tmp_path / "B_ConfigMem_opt.csv")
-
-    assert fabric_csv.read_text() == (
-        "TILE,A\n"
-        "MATRIX,./A_switch_matrix.csv\n"
-        "CONFIGMEM,./A_ConfigMem.csv\n"
-        "EndTILE\n"
-        "TILE,B\n"
-        "MATRIX,./B_switch_matrix.csv\n"
-        "CONFIGMEM,./B_ConfigMem_opt.csv\n"
-        "EndTILE\n"
-    )
 
 @pytest.mark.parametrize("prefix", ["", "MUL_"])
 def test_supertile_bel_add_as_custom_prim(project: Path, prefix: str) -> None:

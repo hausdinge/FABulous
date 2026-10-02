@@ -222,7 +222,7 @@ def generateTile(
                 "Need to run matrix generation first"
             )
 
-        if tile.globalConfigBits > 0 and config_bit_mode == ConfigBitMode.FRAME_BASED:
+        if tile.globalConfigBits > 0:
             if (basePath / f"{tile.name}_ConfigMem.vhdl").exists():
                 writer.addComponentDeclarationForFile(
                     f"{basePath}/{tile.name}_ConfigMem.vhdl"

@@ -31,7 +31,6 @@ from pathlib import Path
 import pytest
 
 from fabulous.fabric_definition.bel import Bel
-from fabulous.fabric_definition.configmem import empty_config_mem
 from fabulous.fabric_definition.define import (
     IO,
     USER_CLK_PREDECESSOR,
@@ -358,7 +357,6 @@ class TestBelExternalPorts:
             bels=[bel],
             tileDir=Path(),
             switch_matrix=SwitchMatrix(matrix_file=Path(), connections={}),
-            config_mem=empty_config_mem(Path("ConfigMem.csv")),
             gen_ios=[],
             userCLK=False,
         )
@@ -395,7 +393,6 @@ class TestInterTileRouting:
             bels=[],
             tileDir=Path(),
             switch_matrix=SwitchMatrix(matrix_file=Path(), connections={}),
-            config_mem=empty_config_mem(Path("ConfigMem.csv")),
             gen_ios=[],
             userCLK=False,
         )
@@ -418,7 +415,6 @@ class TestInterTileRouting:
             bels=[],
             tileDir=Path(),
             switch_matrix=SwitchMatrix(matrix_file=Path(), connections={}),
-            config_mem=empty_config_mem(Path("ConfigMem.csv")),
             gen_ios=[],
             userCLK=False,
         )
