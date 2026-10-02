@@ -15,13 +15,7 @@ from fabulous.custom_exception import (
     InvalidSupertileDefinition,
     InvalidTileDefinition,
 )
-from fabulous.fabric_definition.define import (
-    FRAME_BITS_PER_ROW,
-    MAX_FRAMES_PER_COL,
-    ConfigBitMode,
-    MultiplexerStyle,
-    Side,
-)
+from fabulous.fabric_definition.define import ConfigBitMode, MultiplexerStyle, Side
 from fabulous.fabric_definition.supertile import SuperTile
 from fabulous.fabric_definition.tile import Tile
 from fabulous.fabric_generator.code_generator.code_generator_Verilog import (
@@ -39,12 +33,7 @@ from fabulous.fabric_generator.gds_generator.helper import (
     round_die_area,
 )
 from fabulous.fabric_generator.gds_generator.steps.tile_area_opt import OptMode
-from fabulous.fabric_generator.gds_generator.variables import (
-    CONFIG_BIT_MODE_VARIABLE,
-)
-from fabulous.fabric_generator.gen_fabric.gen_configmem import (
-    generate_tile_config_mem,
-)
+from fabulous.fabric_generator.gen_fabric.gen_configmem import generateConfigMem
 from fabulous.fabric_generator.gen_fabric.gen_switchmatrix import genTileSwitchMatrix
 from fabulous.fabric_generator.gen_fabric.gen_tile import (
     generateSuperTile,
@@ -85,7 +74,14 @@ class FABulousTile(SequentialFlow):
             "per-subtile Verilog.",
             default=False,
         ),
-        CONFIG_BIT_MODE_VARIABLE,
+        Variable(
+            "FABULOUS_CONFIG_BIT_MODE",
+            ConfigBitMode,
+            "Config-bit storage mode used when regenerating the tile switch "
+            "matrix and config memory. Must match the parent fabric; the "
+            "standalone tile flow has no fabric to read it from.",
+            default=ConfigBitMode.FRAME_BASED,
+        ),
         Variable(
             "FABULOUS_MULTIPLEXER_STYLE",
             MultiplexerStyle,
@@ -115,17 +111,8 @@ class FABulousTile(SequentialFlow):
         tile_name = self.config.get("DESIGN_NAME") or tile_dir.name
         is_supertile = bool(self.config.get("FABULOUS_SUPERTILE", False))
 
-        # A chain tile must not read a stale mapping left by a frame-based run.
-        config_bit_mode = ConfigBitMode(self.config[CONFIG_BIT_MODE_VARIABLE.name])
         try:
-            tile = parse_tile_from_dir(
-                tile_dir,
-                tile_name,
-                is_supertile,
-                config_bit_mode=config_bit_mode,
-                frame_bits_per_row=FRAME_BITS_PER_ROW,
-                max_frames_per_col=MAX_FRAMES_PER_COL,
-            )
+            tile = parse_tile_from_dir(tile_dir, tile_name, is_supertile)
         except (
             FileNotFoundError,
             InvalidTileDefinition,
@@ -133,6 +120,7 @@ class FABulousTile(SequentialFlow):
         ) as exc:
             raise FlowException(str(exc)) from exc
 
+        config_bit_mode = ConfigBitMode(self.config["FABULOUS_CONFIG_BIT_MODE"])
         multiplexer_style = MultiplexerStyle(self.config["FABULOUS_MULTIPLEXER_STYLE"])
         writer = VerilogCodeGenerator()
         _emit_tile_verilog(
@@ -244,11 +232,7 @@ def _emit_tile_verilog(
         return
 
     _emit_regular_tile_verilog(
-        writer,
-        tile,
-        tile_dir,
-        config_bit_mode,
-        multiplexer_style,
+        writer, tile, tile_dir, config_bit_mode, multiplexer_style
     )
 
 
@@ -271,8 +255,13 @@ def _emit_regular_tile_verilog(
         multiplexer_style=multiplexer_style,
         default_pip_delay=_SWITCH_MATRIX_PIP_DELAY,
     )
-    if config_bit_mode is ConfigBitMode.FRAME_BASED:
-        generate_tile_config_mem(writer, tile)
+    writer.outFileName = tile_dir / f"{tile.name}_ConfigMem.v"
+    generateConfigMem(
+        writer,
+        tile.name,
+        tile.globalConfigBits,
+        tile_dir / f"{tile.name}_ConfigMem.csv",
+    )
     writer.outFileName = tile_dir / f"{tile.name}.v"
     generateTile(
         writer,
