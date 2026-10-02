@@ -31,7 +31,7 @@ dependencies = [
   "pydantic-settings>=2.10.1",
   "packaging>=25.0",
   "typer>=0.20.0",
-  "fabulous-bit-gen @ git+https://github.com/hausdinge/FABulous-bit-gen.git@conf_encoding_p_outof_n",
+  "fabulous-bit-gen @ git+https://github.com/FPGA-Research/FABulous-bit-gen-OWAS.git@OWAS_conf_encoding_p_outof_n",
   'PyYAML>=6.0.0',
   # Every PyPI librelane up to 3.1.0.dev3 pins ciel<3, so a non-uv install
   # fails at resolution until 3.1.0 ships. See the librelane uv source.
