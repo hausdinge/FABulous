@@ -177,6 +177,8 @@ DEP002 = ["go-task-bin", "FABulous-bit-gen"]
 FABulous-bit-gen = "FABulous_bit_gen"
 
 [tool.uv.sources]
+# Private OWAS fork; CI reads it with the BITGEN_TOKEN secret (see the workflows).
+FABulous-bit-gen = { git = "https://github.com/FPGA-Research/FABulous-bit-gen-OWAS.git", branch = "main" }
 sdf-timing = { git = "https://github.com/FPGA-Research/f4pga-sdf-timing.git" }
 # ihp-sg13cmos5l needs ciel 3, which no librelane release supports yet. This is
 # the dev commit that enabled the variant; flake.nix pins the same rev. Drop
