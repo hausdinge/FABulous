@@ -18,6 +18,9 @@ inputs:
       grant `actions: write`."
     required: false
     default: "false"
+  bitgen_token:
+    description: "PAT with read access to the private FABulous-bit-gen-OWAS fork, used only by uv"
+    required: true
 
 runs:
   using: "composite"
@@ -60,6 +63,11 @@ runs:
         python-version: "3.12"
 
     - name: Generate librelane_plugin_fabulous side-package
+      env:
+        # Only this step can read the PAT; later uv calls use the synced venv.
+        GIT_CONFIG_COUNT: 1
+        GIT_CONFIG_KEY_0: url.https://x-access-token:${{ inputs.bitgen_token }}@github.com/FPGA-Research/FABulous-bit-gen-OWAS.insteadOf
+        GIT_CONFIG_VALUE_0: https://github.com/FPGA-Research/FABulous-bit-gen-OWAS
       shell: bash
       run: uv sync --locked
 
