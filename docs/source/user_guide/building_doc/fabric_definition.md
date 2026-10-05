@@ -191,6 +191,18 @@ It is planned to remove these limitations in future versions of FABulous.
 
     This is useful when a specific input must occupy a known mux position.
 
+  - `IncludeBorderRows`, `[TRUE|FALSE]` (default: automatic)
+
+    Whether the top and bottom rows of the fabric get configuration frames, so that tiles there (e.g. IO tiles with config bits) can be configured. When the parameter is omitted, the rows are included as soon as any tile in them has configuration bits.
+
+    `TRUE` always includes them, even without config bits in those rows. `FALSE` excludes them and fails with an error if a tile in those rows has configuration bits, since those bits could never be written.
+
+    With border rows included, the top wrapper instantiates a frame data register for every row (`NumberOfRows` is the full fabric height) and connects `FrameData` directly to them. Without them, only the interior rows are registered and the border rows receive a constant padding word. The value is written to the bitstream specification as `ArchSpecs.IncludeBorderRows`, which `bit_gen` uses to emit frame data for the same rows.
+
+    :::{note}
+    The row select is 5 bits wide and all-ones means "no row", so a fabric can configure at most 30 rows, counting the border rows when they are included.
+    :::
+
   - `Tile`, `path`
 
     Specify a path to a tile configuration file that will be loaded.
