@@ -61,6 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # uv fetches the private FABulous-bit-gen-OWAS fork (tool.uv.sources) with this PAT.
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.BITGEN_TOKEN }}@github.com/FPGA-Research/FABulous-bit-gen-OWAS.insteadOf
+      GIT_CONFIG_VALUE_0: https://github.com/FPGA-Research/FABulous-bit-gen-OWAS
     strategy:
       fail-fast: false
       matrix:
