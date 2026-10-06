@@ -951,6 +951,7 @@ def parseFabricCSV(fileName: str) -> Fabric:
     disableUserCLK = False
     userCLKSide = Side.SOUTH
     multiClkDomains = False
+    includeBorderRows = None
 
     for i in parameters:
         raw_fields = [value.strip() for value in i.split(",")]
@@ -1033,6 +1034,13 @@ def parseFabricCSV(fileName: str) -> Fabric:
             userCLKSide = USER_CLK_DIRECTIONS[i[1]]
         elif i[0].startswith("MultiClkDomains"):
             multiClkDomains = i[1] == "TRUE"
+        elif i[0].startswith("IncludeBorderRows"):
+            if i[1] not in ("TRUE", "FALSE"):
+                raise InvalidFabricParameter(
+                    f"Invalid IncludeBorderRows {i[1]} in parameters. "
+                    "Valid options are TRUE and FALSE."
+                )
+            includeBorderRows = i[1] == "TRUE"
         elif i[0].startswith("PreserveListOrder"):
             # Consumed and validated by the pre-scan above (it must be known
             # before any tile is parsed); accepted here so it is not rejected.
@@ -1103,6 +1111,7 @@ def parseFabricCSV(fileName: str) -> Fabric:
         disableUserCLK=disableUserCLK,
         userCLKSide=userCLKSide,
         multiClkDomains=multiClkDomains,
+        includeBorderRows=includeBorderRows,
         tileDic=tileDic,
         superTileDic=superTileDic,
         unusedTileDic=unusedTileDic,

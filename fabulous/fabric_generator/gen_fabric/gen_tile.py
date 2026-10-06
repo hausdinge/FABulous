@@ -580,7 +580,12 @@ def generateTile(
         ports_pairs.append(("CONFout", f"conf_data({belCounter + 1})"))
         ports_pairs.append(("CLK", "CLK"))
 
-    if config_bit_mode == ConfigBitMode.FRAME_BASED and tile.globalConfigBits > 0:
+    # The switch matrix only declares ConfigBits when it owns bits itself; a
+    # tile can have BEL config bits while its matrix has none.
+    if (
+        config_bit_mode == ConfigBitMode.FRAME_BASED
+        and tile.switch_matrix.no_config_bits > 0
+    ):
         ports_pairs.append(
             (
                 "ConfigBits",

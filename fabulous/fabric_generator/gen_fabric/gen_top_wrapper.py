@@ -9,6 +9,7 @@ interfaces.
 import re
 from pathlib import Path
 
+from fabulous.fabric_cad.gen_bitstream_spec import border_rows_have_config_bits
 from fabulous.fabric_definition.define import IO
 from fabulous.fabric_definition.fabric import Fabric
 from fabulous.fabric_generator.code_generator.code_generator import CodeGenerator
@@ -123,7 +124,11 @@ def generateTopWrapper(writer: CodeGenerator, fabric: Fabric) -> None:
         g[1].sort(key=lambda x: split_port(x))
 
     # header
-    numberOfRows = fabric.numberOfRows - 2
+    # Must match IncludeBorderRows in the bitstream spec, which bit_gen reads to
+    # decide whether the top/bottom rows get frame data.
+    includeBorderRows = border_rows_have_config_bits(fabric)
+    interiorRows = fabric.numberOfRows - 2
+    numberOfRows = fabric.numberOfRows if includeBorderRows else interiorRows
     numberOfColumns = fabric.numberOfColumns
     writer.addHeader(f"{fabric.name}_top")
     writer.addParameterStart(indentLevel=1)
@@ -173,16 +178,19 @@ def generateTopWrapper(writer: CodeGenerator, fabric: Fabric) -> None:
     if "RAM2FAB_D_I" in portGroups and fabric.numberOfBRAMs > 0:
         writer.addComment("BlockRAM ports", onNewLine=True)
         writer.addNewLine()
-        writer.addConnectionVector("RAM2FAB_D_I", f"{numberOfRows * 4 * 4}-1")
-        writer.addConnectionVector("FAB2RAM_D_O", f"{numberOfRows * 4 * 4}-1")
-        writer.addConnectionVector("FAB2RAM_A_O", f"{numberOfRows * 4 * 2}-1")
-        writer.addConnectionVector("FAB2RAM_C_O", f"{numberOfRows * 4}-1")
+        writer.addConnectionVector("RAM2FAB_D_I", f"{interiorRows * 4 * 4}-1")
+        writer.addConnectionVector("FAB2RAM_D_O", f"{interiorRows * 4 * 4}-1")
+        writer.addConnectionVector("FAB2RAM_A_O", f"{interiorRows * 4 * 2}-1")
+        writer.addConnectionVector("FAB2RAM_C_O", f"{interiorRows * 4}-1")
 
     writer.addNewLine()
     writer.addComment("Signal declarations", onNewLine=True)
     writer.addConnectionVector("FrameRegister", "(NumberOfRows*FrameBitsPerRow)-1")
     writer.addConnectionVector("FrameSelect", "(MaxFramesPerCol*NumberOfCols)-1")
-    writer.addConnectionVector("FrameData", "(FrameBitsPerRow*(NumberOfRows+2))-1")
+    if includeBorderRows:
+        writer.addConnectionVector("FrameData", "(FrameBitsPerRow*NumberOfRows)-1")
+    else:
+        writer.addConnectionVector("FrameData", "(FrameBitsPerRow*(NumberOfRows+2))-1")
     writer.addConnectionVector("FrameAddressRegister", "FrameBitsPerRow-1")
     writer.addConnectionScalar("LongFrameStrobe")
     writer.addConnectionVector("LocalWriteData", 31)
@@ -331,9 +339,9 @@ def generateTopWrapper(writer: CodeGenerator, fabric: Fabric) -> None:
 
     # the BRAM module
     if "RAM2FAB_D_I" in portGroups and fabric.numberOfBRAMs > 0:
-        data_cap = int((numberOfRows * 4 * 4) / (fabric.numberOfBRAMs - 1))
-        addr_cap = int((numberOfRows * 4 * 2) / (fabric.numberOfBRAMs - 1))
-        config_cap = int((numberOfRows * 4) / (fabric.numberOfBRAMs - 1))
+        data_cap = int((interiorRows * 4 * 4) / (fabric.numberOfBRAMs - 1))
+        addr_cap = int((interiorRows * 4 * 2) / (fabric.numberOfBRAMs - 1))
+        config_cap = int((interiorRows * 4) / (fabric.numberOfBRAMs - 1))
         for i in range(fabric.numberOfBRAMs - 1):
             portsPairs = [
                 ("clk", "CLK"),
@@ -356,7 +364,9 @@ def generateTopWrapper(writer: CodeGenerator, fabric: Fabric) -> None:
                 compInsName=f"Inst_BlockRAM_{i}",
                 portsPairs=portsPairs,
             )
-    if isinstance(writer, VHDLCodeGenerator):
+    if includeBorderRows:
+        writer.addAssignScalar("FrameData", "FrameRegister")
+    elif isinstance(writer, VHDLCodeGenerator):
         writer.addAssignScalar(
             "FrameData", ['X"12345678"', "FrameRegister", 'X"12345678"']
         )

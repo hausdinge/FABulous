@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 
 
 def border_rows_have_config_bits(fabric: Fabric) -> bool:
-    """Check whether the top or bottom fabric row holds any config bits.
+    """Decide whether the top and bottom rows get configuration frames.
+
+    The fabric's `IncludeBorderRows` parameter decides when set; otherwise the
+    rows are included if any tile in them has configuration bits.
 
     Parameters
     ----------
@@ -30,17 +33,27 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
     Returns
     -------
     bool
-        True if any tile in the top or bottom row has configuration bits.
-    """
-    if not fabric.tile:
-        return False
+        True if the border rows get configuration frames.
 
-    border_rows = (fabric.tile[0], fabric.tile[-1])
-    return any(
+    Raises
+    ------
+    ValueError
+        If `IncludeBorderRows` is FALSE but a border tile has configuration bits,
+        which would leave those bits unconfigurable.
+    """
+    has_bits = bool(fabric.tile) and any(
         tile is not None and tile.globalConfigBits > 0
-        for row in border_rows
+        for row in (fabric.tile[0], fabric.tile[-1])
         for tile in row
     )
+    if fabric.includeBorderRows is None:
+        return has_bits
+    if has_bits and not fabric.includeBorderRows:
+        raise ValueError(
+            "IncludeBorderRows is FALSE, but a tile in the top or bottom row "
+            "has configuration bits that could then never be written."
+        )
+    return fabric.includeBorderRows
 
 
 def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:

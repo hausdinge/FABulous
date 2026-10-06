@@ -613,8 +613,8 @@ wheels = [
 
 [[package]]
 name = "fabulous-bit-gen"
-version = "0.1.dev71+g47ae0bc8c"
-source = { git = "ssh://git@github.com/FPGA-Research/FABulous-bit-gen-OWAS.git?rev=OWAS_conf_encoding_p_outof_n#47ae0bc8ce2c01dd2907e83fa2f0bbca50a8a79e" }
+version = "0.1.dev73+g571bb5e5c"
+source = { git = "https://github.com/FPGA-Research/FABulous-bit-gen-OWAS.git?branch=main#571bb5e5c4d04ca36603f600e7091b048ce468b1" }
 dependencies = [
     { name = "fabulous-fasm" },
     { name = "loguru" },
@@ -680,7 +680,7 @@ requires-dist = [
     { name = "ciel", specifier = ">=3.0.0" },
     { name = "cmd2", specifier = ">=4.1.2" },
     { name = "dill", specifier = ">=0.4.0" },
-    { name = "fabulous-bit-gen", git = "ssh://git@github.com/FPGA-Research/FABulous-bit-gen-OWAS.git?rev=OWAS_conf_encoding_p_outof_n" },
+    { name = "fabulous-bit-gen", git = "https://github.com/FPGA-Research/FABulous-bit-gen-OWAS.git?branch=main" },
     { name = "go-task-bin", specifier = ">=3.40.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "librelane", git = "https://github.com/librelane/librelane.git?rev=aaf7a938766e0708ca894776d81e2c2cfb12b7e7" },
