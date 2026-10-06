@@ -242,7 +242,7 @@ It is planned to remove these limitations in future versions of FABulous.
     With border rows included, the top wrapper instantiates a frame data register for every row (`NumberOfRows` is the full fabric height) and connects `FrameData` directly to them. Without them, only the interior rows are registered and the border rows receive a constant padding word. The value is written to the bitstream specification as `ArchSpecs.IncludeBorderRows`, which `bit_gen` uses to emit frame data for the same rows.
 
     :::{note}
-    The row select is 5 bits wide and all-ones means "no row", so a fabric can configure at most 30 rows, counting the border rows when they are included.
+    The row select is 5 bits wide. Row IDs start at 1 and all-ones (31) means "no row", so a fabric can configure at most 30 rows. Wrapper and bitstream-spec generation reject larger configured-row counts. This permits up to 30 total rows when borders are included, or 32 total rows when configuration-free borders are excluded. The limit applies to both ordinary and q-out-of-n frame-strobe encoding.
     :::
 
   - `Tile`, `path`

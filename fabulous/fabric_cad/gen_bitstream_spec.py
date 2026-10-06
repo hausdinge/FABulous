@@ -23,7 +23,8 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
     """Decide whether the top and bottom rows get configuration frames.
 
     The fabric's `IncludeBorderRows` parameter decides when set; otherwise the
-    rows are included if any tile in them has configuration bits.
+    rows are included if any tile in them has configuration bits. The resulting
+    configured-row count must fit the configuration controller's row selector.
 
     Parameters
     ----------
@@ -39,21 +40,33 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
     ------
     ValueError
         If `IncludeBorderRows` is FALSE but a border tile has configuration bits,
-        which would leave those bits unconfigurable.
+        which would leave those bits unconfigurable, or if too many rows would
+        be configured for the row-selector width.
     """
     has_bits = bool(fabric.tile) and any(
         tile is not None and tile.globalConfigBits > 0
         for row in (fabric.tile[0], fabric.tile[-1])
         for tile in row
     )
-    if fabric.includeBorderRows is None:
-        return has_bits
-    if has_bits and not fabric.includeBorderRows:
+    include_border_rows = (
+        has_bits if fabric.includeBorderRows is None else fabric.includeBorderRows
+    )
+    if has_bits and not include_border_rows:
         raise ValueError(
             "IncludeBorderRows is FALSE, but a tile in the top or bottom row "
             "has configuration bits that could then never be written."
         )
-    return fabric.includeBorderRows
+    configured_rows = fabric.numberOfRows - (0 if include_border_rows else 2)
+    # Row IDs start at one; all-ones is the idle value seen by Frame_Data_Reg.
+    max_configured_rows = (1 << fabric.rowSelectWidth) - 2
+    if configured_rows > max_configured_rows:
+        raise ValueError(
+            f"The fabric requires {configured_rows} configured rows, but the "
+            f"{fabric.rowSelectWidth}-bit row selector supports at most "
+            f"{max_configured_rows}. Reduce the fabric height or exclude "
+            "configuration-free border rows with IncludeBorderRows,FALSE."
+        )
+    return include_border_rows
 
 
 def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
