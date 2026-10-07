@@ -57,7 +57,8 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
         for row in (fabric.tile[0], fabric.tile[-1])
         for tile in row
     )
-    if has_bits and not fabric.includeBorderRows:
+    include_border_rows = bool(fabric.includeBorderRows)
+    if has_bits and not include_border_rows:
         raise ValueError(
             "A tile in the top or bottom row has configuration bits, but "
             "IncludeBorderRows is not TRUE, so they could never be written. Set "
