@@ -948,7 +948,7 @@ def parseFabricCSV(fileName: str) -> Fabric:
     disableUserCLK = False
     userCLKSide = Side.SOUTH
     multiClkDomains = False
-    includeBorderRows = None
+    includeBorderRows = False
 
     for i in parameters:
         i = i.split(",")

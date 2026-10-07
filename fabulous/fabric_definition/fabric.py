@@ -72,9 +72,8 @@ class Fabric:
     multiClkDomains : bool
         Whether the fabric uses multiple clock domains. When True, CLK features
         are kept in the bitstream instead of being filtered out.
-    includeBorderRows : bool | None
-        Whether the top and bottom rows get configuration frames. None derives
-        it from whether a border tile has configuration bits.
+    includeBorderRows : bool
+        Whether the top and bottom rows get configuration frames. Default False.
     syncHeaderHex : str
         Hex string of the 20-byte sync header written at the start of every
         binary bitstream.
@@ -116,7 +115,7 @@ class Fabric:
     disableUserCLK: bool = False
     userCLKSide: Side = Side.SOUTH
     multiClkDomains: bool = False
-    includeBorderRows: bool | None = None
+    includeBorderRows: bool = False
     syncHeaderHex: str = "00AAFF01000000010000000000000000FAB0FAB1"
 
     tileDic: dict[str, Tile] = field(default_factory=dict)
