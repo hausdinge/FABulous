@@ -205,6 +205,7 @@ class FABulous_API:
                 configMem,
                 frame_bits_per_row=self.fabric.frameBitsPerRow,
                 max_frame_per_col=self.fabric.maxFramesPerCol,
+                frame_strobe_encoding=self.fabric.frame_strobe_encoding,
             )
         else:
             raise ValueError(f"Tile {tileName} not found")
@@ -282,6 +283,7 @@ class FABulous_API:
                 max_frame_per_col or self.fabric.maxFramesPerCol,
                 disable_user_clk or self.fabric.disableUserCLK,
                 config_bit_mode or self.fabric.configBitMode,
+                frame_strobe_encoding=self.fabric.frame_strobe_encoding,
             )
         else:
             raise ValueError(f"Tile {tileName} not found")
@@ -329,6 +331,7 @@ class FABulous_API:
                 disable_user_clk or self.fabric.disableUserCLK,
                 config_bit_mode or self.fabric.configBitMode,
                 user_clk_side=self.fabric.userCLKSide,
+                frame_strobe_encoding=self.fabric.frame_strobe_encoding,
             )
         else:
             raise ValueError(f"SuperTile {tileName} not found")
@@ -390,6 +393,7 @@ class FABulous_API:
                 master_config_mem_csv,
                 frame_bits_per_row=self.fabric.frameBitsPerRow,
                 max_frame_per_col=self.fabric.maxFramesPerCol,
+                frame_strobe_encoding=self.fabric.frame_strobe_encoding,
             )
         else:
             raise ValueError(f"SuperTile {tileName} not found")

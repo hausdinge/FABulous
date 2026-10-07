@@ -26,9 +26,14 @@ from fabulous.fabric_cad.gen_bitstream_spec import (
 from fabulous.fabric_definition.bel import Bel
 from fabulous.fabric_definition.define import Direction
 from fabulous.fabric_definition.fabric import Fabric
+from fabulous.fabric_definition.frame_strobe import FrameStrobeEncoding
 from fabulous.fabric_definition.switch_matrix import SwitchMatrix
 from fabulous.fabric_definition.tile import Tile
 from fabulous.fabric_definition.wire import Wire
+from fabulous.fabric_generator.code_generator.code_generator_Verilog import (
+    VerilogCodeGenerator,
+)
+from fabulous.fabric_generator.gen_fabric.gen_top_wrapper import generateTopWrapper
 from fabulous.fabulous_repl.fabulous_repl import FABulousREPL
 from tests.conftest import make_empty_tile, make_fabric_from_grid, run_cmd
 
@@ -142,6 +147,62 @@ def test_border_rows_row_limit(
             border_rows_have_config_bits(fabric)
     else:
         border_rows_have_config_bits(fabric)
+
+
+@pytest.mark.parametrize(("q", "n"), [(1, 20), (2, 6)])
+@pytest.mark.parametrize("height", [31, 32])
+@pytest.mark.parametrize(("override", "border_bits"), [(None, 1), (True, 1), (True, 0)])
+def test_generators_reject_unaddressable_rows(
+    tmp_path: Path, q: int, n: int, height: int, override: bool | None, border_bits: int
+) -> None:
+    """Both generators reject idle-row collisions and counter overflow early."""
+    fabric = _fabric_from_bits([[border_bits]] + [[0]] * (height - 1))
+    fabric.includeBorderRows = override
+    fabric.frame_strobe_encoding = FrameStrobeEncoding(q=q, n=n)
+    error = rf"requires {height} configured rows.*supports at most 30"
+    with pytest.raises(ValueError, match=error):
+        generateBitstreamSpec(fabric)
+    writer = VerilogCodeGenerator()
+    writer.outFileName = tmp_path / "eFPGA_top.v"
+    with pytest.raises(ValueError, match=error):
+        generateTopWrapper(writer, fabric)
+    assert not writer.outFileName.exists()
+
+
+@pytest.mark.parametrize(("q", "n"), [(1, 20), (2, 6)])
+@pytest.mark.parametrize(
+    ("height", "override", "border_bits", "expected"),
+    [
+        (30, None, 1, True),
+        (30, True, 0, True),
+        (32, None, 0, False),
+        (32, False, 0, False),
+    ],
+)
+def test_maximum_configured_rows_remain_supported(
+    tmp_path: Path,
+    q: int,
+    n: int,
+    height: int,
+    override: bool | None,
+    border_bits: int,
+    expected: bool,
+) -> None:
+    """The legal 30-row limit is shared by border detection and wrapper sizing."""
+    fabric = _fabric_from_bits([[border_bits]] + [[0]] * (height - 1))
+    fabric.includeBorderRows = override
+    fabric.frame_strobe_encoding = FrameStrobeEncoding(q=q, n=n)
+    assert border_rows_have_config_bits(fabric) is expected
+    writer = VerilogCodeGenerator()
+    writer.outFileName = tmp_path / "eFPGA_top.v"
+    generateTopWrapper(writer, fabric)
+    rtl = writer.outFileName.read_text()
+    compact_rtl = "".join(rtl.split())
+    assert "parameterNumberOfRows=30," in compact_rtl
+    assert compact_rtl.count("Frame_Data_Reg#(") == 30
+    if not border_bits:
+        spec = generateBitstreamSpec(fabric)
+        assert spec["ArchSpecs"]["IncludeBorderRows"] is expected
 
 
 @pytest.fixture

@@ -31,7 +31,7 @@ dependencies = [
   "pydantic-settings>=2.10.1",
   "packaging>=25.0",
   "typer>=0.20.0",
-  "FABulous-bit-gen>=0.3.1",
+  "fabulous-bit-gen",
   'PyYAML>=6.0.0',
   # Every PyPI librelane up to 3.1.0.dev3 pins ciel<3, so a non-uv install
   # fails at resolution until 3.1.0 ships. See the librelane uv source.
@@ -171,10 +171,10 @@ extend_exclude = [
 ]
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["go-task-bin", "FABulous-bit-gen"]
+DEP002 = ["go-task-bin", "fabulous-bit-gen"]
 
 [tool.deptry.package_module_name_map]
-FABulous-bit-gen = "FABulous_bit_gen"
+fabulous-bit-gen = "fabulous_bit_gen"
 
 [tool.uv.sources]
 # Private OWAS fork; CI reads it with the BITGEN_TOKEN secret (see the workflows).

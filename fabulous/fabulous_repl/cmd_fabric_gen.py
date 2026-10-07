@@ -14,6 +14,7 @@ from loguru import logger
 
 from fabulous.custom_exception import CommandError
 from fabulous.fabric_cad.gen_npnr_model import PLACEMENT_ESTIMATE_TEXT
+from fabulous.fabric_definition.supertile import SuperTile
 from fabulous.fabric_generator.gen_fabric.fabric_automation import (
     generateCustomTileConfig,
 )
@@ -111,17 +112,16 @@ class FabricGenCommandSet(ReplCommandSet):
 
         Parsing input arguments, call functions such as `genSwitchMatrix` and
         `genConfigMem`. Handle both regular tiles and super tiles with sub-tiles.
+        Supertile membership comes from the fabric model, not subdirectories.
 
         Also logs generation process for each specified tile and sub-tile.
         """
         repl = self._cmd
         logger.info(f"Generating tile {' '.join(tiles)}")
         for t in tiles:
-            if sub_tiles := [
-                f.stem
-                for f in (repl.projectDir / f"Tile/{t}").iterdir()
-                if f.is_dir() and f.name != "macro"
-            ]:
+            tile = repl.fabulousAPI.fabric.getTileByName(t)
+            if isinstance(tile, SuperTile):
+                sub_tiles = [subtile.name for subtile in tile.tiles]
                 logger.info(
                     f"{t} is a super tile, generating {t} with sub tiles "
                     f"{' '.join(sub_tiles)}"

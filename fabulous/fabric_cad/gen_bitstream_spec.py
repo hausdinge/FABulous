@@ -71,7 +71,17 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
             f"addressable ({MAX_FRAME_ROWS - 2} interior rows plus the top and "
             "bottom row). Remove rows or the border-row configuration bits."
         )
-    return fabric.includeBorderRows
+    configured_rows = fabric.numberOfRows - (0 if include_border_rows else 2)
+    # Row IDs start at one; all-ones is the idle value seen by Frame_Data_Reg.
+    max_configured_rows = (1 << fabric.rowSelectWidth) - 2
+    if configured_rows > max_configured_rows:
+        raise ValueError(
+            f"The fabric requires {configured_rows} configured rows, but the "
+            f"{fabric.rowSelectWidth}-bit row selector supports at most "
+            f"{max_configured_rows}. Reduce the fabric height or exclude "
+            "configuration-free border rows with IncludeBorderRows,FALSE."
+        )
+    return include_border_rows
 
 
 def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
@@ -108,6 +118,18 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
             "FABulousVersion": version("FABulous-FPGA"),
         },
     }
+
+    # Old specifications retain their exact shape. Encoded specifications carry
+    # the actual address masks so the writer never reconstructs an RTL mapping.
+    if fabric.frame_strobe_encoding.q != 1:
+        specData["ArchSpecs"]["FrameStrobeEncoding"] = {
+            "kind": "q_of_n",
+            **fabric.frame_strobe_encoding.model_dump(),
+        }
+        specData["ArchSpecs"]["FrameStrobeMasks"] = list(
+            fabric.frame_strobe_encoding.masks(fabric.maxFramesPerCol)
+        )
+    logical_frames = fabric.logical_frames_per_col
 
     tileMap = {}
     for y, row in enumerate(fabric.tile):
@@ -149,7 +171,7 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
             if configMemPath.exists() and configMemPath.is_file():
                 configMemList = parseConfigMem(
                     configMemPath,
-                    fabric.maxFramesPerCol,
+                    logical_frames,
                     fabric.frameBitsPerRow,
                     tile.globalConfigBits,
                 )
@@ -163,7 +185,7 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
                 logger.info(f"No config memory for {tile.name}.")
                 configMemList = []
 
-            encodeDict = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
+            encodeDict = [-1] * (logical_frames * fabric.frameBitsPerRow)
             maskDic = {}
             for cfm in configMemList:
                 maskDic[cfm.frameIndex] = cfm.usedBitMask
@@ -176,7 +198,7 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
                         ) + fabric.frameBitsPerRow * cfm.frameIndex
 
             # filling the maskDic with the unused frames
-            for i in range(fabric.maxFramesPerCol - len(configMemList)):
+            for i in range(logical_frames - len(configMemList)):
                 maskDic[len(configMemList) + i] = "0" * fabric.frameBitsPerRow
 
             specData["FrameMap"][tile.name] = maskDic
@@ -245,12 +267,12 @@ def generateBitstreamSpec(fabric: Fabric) -> dict[str, dict]:
 
         st_config_bits = super_tile.total_config_bits
 
-        st_encode_dict = [-1] * (fabric.maxFramesPerCol * fabric.frameBitsPerRow)
+        st_encode_dict = [-1] * (logical_frames * fabric.frameBitsPerRow)
         st_mask_dic: dict[int, str] = {}
         if st_config_bits > 0:
             st_config_mem_list = parseConfigMem(
                 super_tile.tileDir.parent / f"{super_tile.name}_ConfigMem.csv",
-                fabric.maxFramesPerCol,
+                logical_frames,
                 fabric.frameBitsPerRow,
                 st_config_bits,
             )

@@ -25,6 +25,57 @@ The legacy `gen_bitStream_binary <design.fasm>` command is deprecated but still 
 The resulting bitstream is placed in the same directory as where the `fasm` file is located and named as
 `design.bin`.
 
+### Encoded frame strobes
+
+For a fabric using `FrameStrobeEncoding,q_of_n,q,n`, generate the configuration
+memory and specification with the same encoding. The specification keeps
+`MaxFramesPerCol=20` as the physical interface width and supplies
+`ArchSpecs.FrameStrobeMasks` for the logical frames. The binary writer uses the
+table length for storage and each table entry for the frame-select word. The
+column and desynchronization fields retain their existing positions.
+
+The project installs `FABulous-bit-gen` from the `conf_encoding_p_outof_n`
+branch of [the encoding fork](https://github.com/hausdinge/FABulous-bit-gen).
+The Git requirement is declared in `pyproject.toml`, so both `uv` and `pip`
+use that source. `uv.lock` pins the resolved commit for reproducible installs.
+Run `uv sync --locked` to install it. To adopt newer commits from the branch,
+run `uv lock --upgrade-package fabulous-bit-gen` and then sync again.
+
+The released writer version 0.3.1 only supports direct strobes. Specifications
+without the encoding fields continue to produce the original direct-strobe
+binary format.
+
+#### Current limits and wider interfaces
+
+The supported fabric configuration currently requires `MaxFramesPerCol=20`
+and `FrameBitsPerRow=32`. These are interface limits, not a requirement of
+q-out-of-n encoding. For a physical strobe count `M` and frame data width `B`,
+the encoding provides `M - n + binomial(n, q)` logical frames and
+`(M - n + binomial(n, q)) * B` configuration bits per tile.
+
+Mask generation and memory sizing already use the supplied widths, but some
+validation remains tied to the current interface:
+
+- FABulous's `FrameStrobeEncoding` caps `q` and `n` at 20 and checks logical-frame
+  capacity using the literal `20 - n + binomial(n, q)`.
+- The companion writer's `_resolve_frame_masks` uses the actual physical strobe
+  count for capacity, but still requires `n <= min(20, MaxFramesPerCol)`.
+- Both repositories enforce a 256-logical-frame limit to bound decoder size.
+
+If the supported interface widths are generalized, developers should update
+these checks consistently in both repositories, using the actual physical
+strobe count for capacity validation. The existing 2-of-6 code can scale within
+its current limits; larger encoding groups would also require relaxing the
+20-wire group limit. The mask-table and AND-decoder approach does not need a
+redesign merely because the widths increase.
+
+Changing or removing these checks alone does not establish wider-interface
+support. The configuration controller, frame data transport and bitstream word
+layout must agree on the new widths, with strobe, column-address and
+desynchronization fields kept separate. Extend the end-to-end configuration
+simulations before claiming support for those widths. The existing checks and
+supported widths are unchanged by this documentation.
+
 ### Manually generating a bitstream
 
 To generate the necessary materials to generate a bitstream, run `$FAB_ROOT/fabric_generator/fabric_gen.py` with the `-GenBitstreamSpec` flag.

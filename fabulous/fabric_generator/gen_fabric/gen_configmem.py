@@ -14,6 +14,10 @@ from bitarray import bitarray
 from loguru import logger
 
 from fabulous.fabric_definition.define import IO
+from fabulous.fabric_definition.frame_strobe import (
+    FrameStrobeEncoding,
+    frame_strobe_masks,
+)
 from fabulous.fabric_generator.code_generator.code_generator import CodeGenerator
 from fabulous.fabric_generator.code_generator.code_generator_Verilog import (
     VerilogCodeGenerator,
@@ -109,6 +113,7 @@ def generateConfigMem(
     configMemCsv: Path,
     frame_bits_per_row: int = 32,
     max_frame_per_col: int = 20,
+    frame_strobe_encoding: FrameStrobeEncoding | None = None,
 ) -> None:
     """Generate the RTL code for configuration memory.
 
@@ -134,7 +139,9 @@ def generateConfigMem(
     frame_bits_per_row : int
         The number of configuration bits per frame row.
     max_frame_per_col : int
-        The number of frames stored per tile column.
+        Physical FrameStrobe width.
+    frame_strobe_encoding : FrameStrobeEncoding | None
+        Optional selection code; omission preserves direct strobes.
 
     Raises
     ------
@@ -143,11 +150,13 @@ def generateConfigMem(
         - If the total config bits in the config memory CSV file does not match
           config_bits_count.
     """
-    if config_bits_count > frame_bits_per_row * max_frame_per_col:
+    strobe_masks = frame_strobe_masks(max_frame_per_col, frame_strobe_encoding)
+    logical_frames = len(strobe_masks)
+    if config_bits_count > frame_bits_per_row * logical_frames:
         raise ValueError(
             f"{name} has {config_bits_count} global config bits, "
             " which exceeds fabric capacity "
-            f"({frame_bits_per_row * max_frame_per_col} bits). "
+            f"({frame_bits_per_row * logical_frames} bits). "
             "Please adjust the configuration."
         )
 
@@ -163,7 +172,7 @@ def generateConfigMem(
         logger.info(f"Parsing {name}_configMem.csv")
         configMemList = parseConfigMem(
             configMemCsv,
-            max_frame_per_col,
+            logical_frames,
             frame_bits_per_row,
             config_bits_count,
         )
@@ -174,12 +183,12 @@ def generateConfigMem(
             configMemCsv,
             config_bits_count,
             frame_bits_per_row=frame_bits_per_row,
-            max_frame_per_col=max_frame_per_col,
+            max_frame_per_col=logical_frames,
         )
         logger.info(f"Parsing {name}_configMem.csv")
         configMemList = parseConfigMem(
             configMemCsv,
-            max_frame_per_col,
+            logical_frames,
             frame_bits_per_row,
             config_bits_count,
         )
@@ -207,7 +216,7 @@ def generateConfigMem(
     writer.addHeader(f"{name}_ConfigMem")
     writer.addParameterStart(indentLevel=1)
     if isinstance(writer, VerilogCodeGenerator):  # emulation only in Verilog
-        maxBits = frame_bits_per_row * max_frame_per_col
+        maxBits = frame_bits_per_row * logical_frames
         writer.addPreprocIfDef("EMULATION")
         writer.addParameter(
             "Emulate_Bitstream",
@@ -238,6 +247,14 @@ def generateConfigMem(
     # declare architecture
     writer.addDesignDescriptionStart(f"{name}_ConfigMem")
 
+    decoded_frames = {
+        entry.frameIndex: strobe_masks[entry.frameIndex]
+        for entry in configMemList
+        if entry.bitsUsedInFrame and strobe_masks[entry.frameIndex].bit_count() > 1
+    }
+    for frame in decoded_frames:
+        writer.addConnectionScalar(f"DecodedFrameStrobe_{frame}")
+
     if isinstance(writer, VerilogCodeGenerator):  # emulation only in Verilog
         writer.addPreprocIfDef("EMULATION")
         for i in configMemList:
@@ -258,9 +275,24 @@ def generateConfigMem(
     writer.addNewLine()
     writer.addNewLine()
     writer.addLogicStart()
+    operator = " & " if isinstance(writer, VerilogCodeGenerator) else " and "
+    for frame, mask in decoded_frames.items():
+        writer.addAssignScalar(
+            f"DecodedFrameStrobe_{frame}",
+            operator.join(
+                f"FrameStrobe[{bit}]"
+                for bit in range(max_frame_per_col)
+                if mask & (1 << bit)
+            ),
+        )
     writer.addComment("instantiate frame latches", end="")
     for i in configMemList:
         counter = 0
+        strobe = (
+            f"DecodedFrameStrobe_{i.frameIndex}"
+            if i.frameIndex in decoded_frames
+            else f"FrameStrobe[{strobe_masks[i.frameIndex].bit_length() - 1}]"
+        )
         for k in range(frame_bits_per_row):
             # Safely check if bit is set, treat missing bits as '0'
             bit_value = i.usedBitMask[k] if k < len(i.usedBitMask) else "0"
@@ -270,7 +302,7 @@ def generateConfigMem(
                     compInsName=(f"Inst_{i.frameName}_bit{frame_bits_per_row - 1 - k}"),
                     portsPairs=[
                         ("D", f"FrameData[{frame_bits_per_row - 1 - k}]"),
-                        ("E", f"FrameStrobe[{i.frameIndex}]"),
+                        ("E", strobe),
                         ("Q", f"ConfigBits[{i.configBitRanges[counter]}]"),
                         ("QN", f"ConfigBits_N[{i.configBitRanges[counter]}]"),
                     ],
@@ -490,6 +522,7 @@ def generate_super_tile_config_mem(
     master_config_mem_csv: Path,
     frame_bits_per_row: int = 32,
     max_frame_per_col: int = 20,
+    frame_strobe_encoding: FrameStrobeEncoding | None = None,
 ) -> None:
     """Generate the ConfigMem RTL for a supertile switch matrix.
 
@@ -508,7 +541,9 @@ def generate_super_tile_config_mem(
     frame_bits_per_row : int
         Number of bits per frame row.
     max_frame_per_col : int
-        Number of frames per column.
+        Physical FrameStrobe width.
+    frame_strobe_encoding : FrameStrobeEncoding | None
+        Optional configuration frame selection code.
     """
     st_config_bits = superTile.total_config_bits
     if st_config_bits <= 0:
@@ -520,7 +555,9 @@ def generate_super_tile_config_mem(
         st_config_bits,
         output_csv,
         frame_bits_per_row=frame_bits_per_row,
-        max_frames_per_col=max_frame_per_col,
+        max_frames_per_col=len(
+            frame_strobe_masks(max_frame_per_col, frame_strobe_encoding)
+        ),
     )
     generateConfigMem(
         writer,
@@ -529,4 +566,5 @@ def generate_super_tile_config_mem(
         output_csv,
         frame_bits_per_row=frame_bits_per_row,
         max_frame_per_col=max_frame_per_col,
+        frame_strobe_encoding=frame_strobe_encoding,
     )
