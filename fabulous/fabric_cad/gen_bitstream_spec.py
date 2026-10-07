@@ -19,11 +19,21 @@ if TYPE_CHECKING:
     from fabulous.fabric_definition.configmem import ConfigMem
 
 
+# Row selects 1..30; 0 is never addressed and 31 (all ones) means "no row".
+MAX_FRAME_ROWS = 30
+
+
 def border_rows_have_config_bits(fabric: Fabric) -> bool:
     """Decide whether the top and bottom rows get configuration frames.
 
-    The fabric's `IncludeBorderRows` parameter decides when set; otherwise the
-    rows are included if any tile in them has configuration bits.
+    Only the fabric's `IncludeBorderRows` parameter decides; it defaults to
+    FALSE and is never switched on by config bits found in the border rows.
+
+    Including them gives every row a frame register addressed by its 1-based
+    row index, and the configuration FSM reserves the all-ones row select as
+    "no row". Only rows 1 to MAX_FRAME_ROWS are addressable, so a fabric with
+    border rows can have at most MAX_FRAME_ROWS rows in total, two fewer
+    interior rows than without them.
 
     Parameters
     ----------
@@ -38,20 +48,28 @@ def border_rows_have_config_bits(fabric: Fabric) -> bool:
     Raises
     ------
     ValueError
-        If `IncludeBorderRows` is FALSE but a border tile has configuration bits,
-        which would leave those bits unconfigurable.
+        If a border tile has configuration bits but `IncludeBorderRows` is not
+        TRUE, which would leave those bits unconfigurable, or if the border rows
+        are included in a fabric with more than MAX_FRAME_ROWS rows.
     """
     has_bits = bool(fabric.tile) and any(
         tile is not None and tile.globalConfigBits > 0
         for row in (fabric.tile[0], fabric.tile[-1])
         for tile in row
     )
-    if fabric.includeBorderRows is None:
-        return has_bits
     if has_bits and not fabric.includeBorderRows:
         raise ValueError(
-            "IncludeBorderRows is FALSE, but a tile in the top or bottom row "
-            "has configuration bits that could then never be written."
+            "A tile in the top or bottom row has configuration bits, but "
+            "IncludeBorderRows is not TRUE, so they could never be written. Set "
+            f"IncludeBorderRows to TRUE (limits the fabric to {MAX_FRAME_ROWS} "
+            "rows) or remove the config bits from the border tiles."
+        )
+    if fabric.includeBorderRows and fabric.numberOfRows > MAX_FRAME_ROWS:
+        raise ValueError(
+            f"The fabric has {fabric.numberOfRows} rows, but with configuration "
+            f"frames in the border rows only {MAX_FRAME_ROWS} rows are "
+            f"addressable ({MAX_FRAME_ROWS - 2} interior rows plus the top and "
+            "bottom row). Remove rows or the border-row configuration bits."
         )
     return fabric.includeBorderRows
 
