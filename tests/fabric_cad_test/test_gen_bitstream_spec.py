@@ -2,8 +2,8 @@
 
 Three layers of coverage:
 
-* Unit tests for :func:`border_rows_have_config_bits`, the border-row detection
-  that drives the ``IncludeBorderRows`` archspec flag.
+* Unit tests for :func:`border_rows_have_config_bits`, the border-row check
+  behind the ``IncludeBorderRows`` archspec flag.
 * Integration tests that run the real generator on a fully generated demo fabric
   and assert the whole specification is internally consistent.
 * Bit-offset tests: ``generateBitstreamSpec`` assigns configuration-bit offsets
@@ -62,7 +62,7 @@ def _fabric_from_bits(grid: list[list[int | None]]) -> Fabric:
 
 
 @pytest.mark.parametrize(
-    ("grid", "expected"),
+    ("grid", "has_bits"),
     [
         ([[0, 0], [127, 127], [0, 0]], False),  # config only in interior row
         ([[127, 0], [127, 127], [0, 0]], True),  # top row has config
@@ -77,11 +77,15 @@ def _fabric_from_bits(grid: list[list[int | None]]) -> Fabric:
     ],
 )
 def test_border_rows_have_config_bits(
-    grid: list[list[int | None]], expected: bool
+    grid: list[list[int | None]], has_bits: bool
 ) -> None:
-    """Border-row detection flags config bits in the top or bottom row only."""
+    """Border config bits never enable the border rows; without the flag they fail."""
     fabric = _fabric_from_bits(grid)
-    assert border_rows_have_config_bits(fabric) is expected
+    if has_bits:
+        with pytest.raises(ValueError, match="IncludeBorderRows is not TRUE"):
+            border_rows_have_config_bits(fabric)
+    else:
+        assert border_rows_have_config_bits(fabric) is False
 
 
 def test_border_rows_have_config_bits_empty_fabric() -> None:
@@ -118,7 +122,30 @@ def test_border_rows_override_off_with_bits_raises() -> None:
     """Forcing border rows off while a border tile has config bits fails."""
     fabric = _fabric_from_bits([[5, 0], [127, 127], [0, 0]])
     fabric.includeBorderRows = False
-    with pytest.raises(ValueError, match="IncludeBorderRows is FALSE"):
+    with pytest.raises(ValueError, match="IncludeBorderRows is not TRUE"):
+        border_rows_have_config_bits(fabric)
+
+
+@pytest.mark.parametrize(
+    ("rows", "border_bits", "override", "raises"),
+    [
+        (30, 5, True, False),  # border rows at the row-select limit
+        (31, 5, True, True),  # one row too many
+        (31, 0, True, True),  # one row too many, no border bits
+        (32, 0, False, False),  # border rows off: 30 interior frame rows
+    ],
+)
+def test_border_rows_row_limit(
+    rows: int, border_bits: int, override: bool, raises: bool
+) -> None:
+    """Border-row frames cap the fabric at 30 addressable rows."""
+    grid = [[border_bits]] + [[127]] * (rows - 2) + [[0]]
+    fabric = _fabric_from_bits(grid)
+    fabric.includeBorderRows = override
+    if raises:
+        with pytest.raises(ValueError, match="only 30 rows are addressable"):
+            border_rows_have_config_bits(fabric)
+    else:
         border_rows_have_config_bits(fabric)
 
 
@@ -250,8 +277,9 @@ def test_multi_clk_domains_flag_propagates(generated_fabric: Fabric) -> None:
 
 
 def test_config_tile_in_border_row_sets_flag(generated_fabric: Fabric) -> None:
-    """Placing a config-bearing tile in the top row turns the flag on."""
+    """A config-bearing tile in the top row is framed once the flag is set."""
     fabric = generated_fabric
+    fabric.includeBorderRows = True
     config_tile = next(
         tile
         for row in fabric.tile
@@ -405,6 +433,8 @@ def _build_fabric(
     fabric.tile = [[tile]]
     fabric.numberOfRows = 1
     fabric.numberOfColumns = 1
+    # The only tile is also the border row, so its config bits need the flag.
+    fabric.includeBorderRows = True
     return fabric
 
 

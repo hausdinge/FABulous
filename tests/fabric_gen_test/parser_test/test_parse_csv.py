@@ -176,7 +176,7 @@ class TestUserCLKDirection:
 
 
 class TestIncludeBorderRows:
-    """`IncludeBorderRows` sets `Fabric.includeBorderRows`; absent means auto."""
+    """`IncludeBorderRows` sets `Fabric.includeBorderRows`; absent means FALSE."""
 
     @staticmethod
     def _set_value(project: Path, value: str) -> Path:
@@ -194,10 +194,10 @@ class TestIncludeBorderRows:
         fabric = parseFabricCSV(str(self._set_value(project, value)))
         assert fabric.includeBorderRows is expected
 
-    def test_default_is_auto(self, project: Path) -> None:
+    def test_default_is_false(self, project: Path) -> None:
         init_context(project)
         fabric = parseFabricCSV(str(project / "fabric.csv"))
-        assert fabric.includeBorderRows is None
+        assert fabric.includeBorderRows is False
 
     def test_invalid_value_raises(self, project: Path) -> None:
         init_context(project)
