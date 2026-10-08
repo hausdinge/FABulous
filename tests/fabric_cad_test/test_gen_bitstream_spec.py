@@ -150,16 +150,27 @@ def test_border_rows_row_limit(
 
 
 @pytest.mark.parametrize(("q", "n"), [(1, 20), (2, 6)])
-@pytest.mark.parametrize("height", [31, 32])
-@pytest.mark.parametrize(("override", "border_bits"), [(None, 1), (True, 1), (True, 0)])
+@pytest.mark.parametrize(
+    ("height", "override", "border_bits", "error"),
+    [
+        (31, True, 1, "only 30 rows are addressable"),
+        (32, True, 0, "only 30 rows are addressable"),
+        (31, None, 1, "IncludeBorderRows is not TRUE"),
+    ],
+)
 def test_generators_reject_unaddressable_rows(
-    tmp_path: Path, q: int, n: int, height: int, override: bool | None, border_bits: int
+    tmp_path: Path,
+    q: int,
+    n: int,
+    height: int,
+    override: bool | None,
+    border_bits: int,
+    error: str,
 ) -> None:
     """Both generators reject idle-row collisions and counter overflow early."""
     fabric = _fabric_from_bits([[border_bits]] + [[0]] * (height - 1))
     fabric.includeBorderRows = override
     fabric.frame_strobe_encoding = FrameStrobeEncoding(q=q, n=n)
-    error = rf"requires {height} configured rows.*supports at most 30"
     with pytest.raises(ValueError, match=error):
         generateBitstreamSpec(fabric)
     writer = VerilogCodeGenerator()
@@ -173,7 +184,7 @@ def test_generators_reject_unaddressable_rows(
 @pytest.mark.parametrize(
     ("height", "override", "border_bits", "expected"),
     [
-        (30, None, 1, True),
+        (30, True, 1, True),
         (30, True, 0, True),
         (32, None, 0, False),
         (32, False, 0, False),

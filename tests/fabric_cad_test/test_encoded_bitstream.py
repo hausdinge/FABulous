@@ -96,6 +96,7 @@ def test_binary_configures_rtl(tmp_path: Path, q: int, n: int) -> None:
         numberOfColumns=2,
         tileDic={tile.name: tile for tile in tiles},
         frame_strobe_encoding=encoding,
+        includeBorderRows=True,
     )
     spec = generateBitstreamSpec(fabric)
     assert spec["ArchSpecs"]["MaxFramesPerCol"] == 20
