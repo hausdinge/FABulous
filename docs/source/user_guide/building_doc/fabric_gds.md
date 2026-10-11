@@ -122,6 +122,204 @@ The per tile `gds_config.yaml` is particularly useful and important as you can s
 Some tiles, such as the `N_term_single` / `S_term_single` routing terminals, synthesize down to little more than wires, but they still occupy a grid position and must stitch with their neighbours, so they are hardened and sized like any other tile. They are routing terminals that cascade and bounce long wires back into the routing channels, not dead logic, so the one-to-one connections you see in their netlist are intended rather than over-optimised away.
 :::
 
+### Custom Python synthesis recipes
+
+The Verilog GDS flow accepts `FABULOUS_SYNTH_SCRIPT`, an optional path to a
+Python/Pyosys replacement for LibreLane's synthesis script. This replaces the
+synthesis recipe, not the generated RTL or the subsequent physical flow.
+No step substitution is required.
+
+For example, set a shared recipe in `Tile/include/gds_config.yaml`:
+
+```yaml
+FABULOUS_SYNTH_SCRIPT: /absolute/path/to/project/synthesis/default.py
+```
+
+Then select a different recipe for a mux-heavy tile in
+`Tile/<tile_name>/gds_config.yaml`:
+
+```yaml
+FABULOUS_SYNTH_SCRIPT: /absolute/path/to/project/synthesis/mux_area.py
+SYNTH_STRATEGY: "AREA 2"
+```
+
+Omitting the option uses LibreLane's standard script unless the shared
+configuration supplies one. Set `FABULOUS_SYNTH_SCRIPT: null` in a tile's
+configuration to explicitly disable an inherited override. Use absolute paths
+to avoid depending on the launch directory; a bare relative path is not
+automatically relative to the tile YAML. The script must be an existing `.py`
+file. Script failures propagate; FABulous does not retry with the default recipe.
+
+The step is named `FABulous.Synthesis`; use that ID for step substitutions and
+flow start/stop controls that previously targeted `Yosys.Synthesis`. LibreLane's
+own `Yosys.Synthesis` registration is unchanged. The option also applies to the
+Verilog fabric flow when set in `Fabric/gds_config.yaml`; tile recipes do not
+automatically become fabric recipes. VHDL flows retain `Yosys.VHDLSynthesis`
+and do not support this override.
+
+#### Complete minimal example
+
+Save the following as `synthesis/basic_synthesis.py` in your project. It is a
+complete, single-file recipe for flattened Verilog designs: it reads the RTL
+and libraries, maps the design and writes the netlist and reports. It does not
+call LibreLane's default synthesis script. `ys_common` supplies only the Pyosys
+interface and low-level file-reading helpers already available in the flow.
+
+Use this snippet as a starting point for your own passes, or copy the pinned
+LibreLane `scripts/pyosys/synthesize.py` if you need its full set of supported
+options. This minimal recipe uses standard Yosys ABC mapping; it does not
+implement `SYNTH_STRATEGY`, timing constraints, clock gating, VHDL or all other
+LibreLane synthesis options, and it is not the tuned area recipe.
+
+```python
+"""Minimal Verilog-to-standard-cell synthesis for FABulous/LibreLane."""
+
+import argparse
+import json
+from pathlib import Path
+
+from ys_common import ys
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config-in", required=True, type=Path)
+    parser.add_argument("--extra-in", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("inputs", nargs="*")
+    args = parser.parse_args()
+
+    config = json.loads(args.config_in.read_text())
+    extra = json.loads(args.extra_in.read_text())
+    top = config["DESIGN_NAME"]
+    libraries = extra["libs_synth"]
+    sources = args.inputs or config["VERILOG_FILES"]
+    if not libraries or not sources:
+        raise ValueError("This recipe requires Verilog sources and synthesis Liberty files")
+    reports = args.output.parent / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+
+    includes = config.get("VERILOG_INCLUDE_DIRS") or []
+    defines = (config.get("VERILOG_DEFINES") or []) + [
+        "__librelane__", "__pnr__",
+        "PDK_" + config["PDK"].replace("-", "_"),
+        "SCL_" + config["STD_CELL_LIBRARY"],
+    ]
+    d = ys.Design()
+    d.add_blackbox_models(extra["blackbox_models"], includes=includes, defines=defines)
+    d.read_verilog_files(
+        sources, top=top, synth_parameters=config.get("SYNTH_PARAMETERS") or [],
+        includes=includes, defines=defines, use_slang=False, slang_arguments=[],
+    )
+    d.run_pass("hierarchy", "-check", "-top", top)
+    d.run_pass("proc")
+    d.tee("check", o=str(reports / "pre_synth_chk.rpt"))
+    d.run_pass("synth", "-top", top, "-flatten", "-noabc")
+
+    # Insert custom generic-gate passes, e.g. muxcover + its techmap, here.
+    # Latches need their library-specific mapping before ABC.
+    for key in ("SYNTH_TRISTATE_MAP", "SYNTH_LATCH_MAP", "SYNTH_EXTRA_MAPPING_FILE"):
+        if mapping := config.get(key):
+            d.run_pass("techmap", "-map", mapping)
+    d.run_pass("simplemap")
+    lib_args = []
+    for library in libraries:
+        lib_args.extend(["-liberty", library])
+    d.run_pass("dfflibmap", *lib_args)
+    d.run_pass("abc", *lib_args)
+
+    d.run_pass(
+        "hilomap",
+        "-hicell", *config["SYNTH_TIEHI_CELL"].split("/"),
+        "-locell", *config["SYNTH_TIELO_CELL"].split("/"),
+    )
+    d.run_pass("splitnets", "-ports")
+    d.run_pass("opt_clean", "-purge")
+    # Turn direct connections into cells for the physical backend.
+    d.run_pass("insbuf", "-buf", *config["SYNTH_BUFFER_CELL"].split("/"))
+    d.tee("check", "-assert", o=str(reports / "chk.rpt"))
+    d.run_pass("select", "-assert-none", "t:$*")
+    d.tee("stat", "-json", *lib_args, o=str(reports / "stat.json"))
+    d.tee("stat", *lib_args, o=str(reports / "stat.rpt"))
+    d.run_pass("write_verilog", "-noattr", "-noexpr", "-nohex", "-nodec", str(args.output))
+    d.run_pass("write_json", str(args.output) + ".json")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Point the tile's `gds_config.yaml` at the saved file (replace the example path):
+
+```yaml
+FABULOUS_SYNTH_SCRIPT: /absolute/path/to/project/synthesis/basic_synthesis.py
+```
+
+With the usual Nix environment, PDK configuration and generated tile RTL, run
+the normal command in the FABulous project shell:
+
+```text
+fabulous> gen_macro tile <tile_name>
+```
+
+Replace `<tile_name>` with the name of your tile. Inspect the `FABulous.Synthesis` step
+directory for the mapped `.nl.v`, its `.json` netlist and `reports/stat.json`.
+The backend consumes that netlist normally. Unmapped generic cells or structural
+check errors stop this recipe; they are not silently passed to placement.
+The recipe uses the configured PDK's tie, buffer and latch mappings and does not
+hardcode IHP cells. To infer larger muxes, add the passes described below and
+provide a techmap for your selected library.
+
+#### Script contract and mux optimisation
+
+Use the synthesis script from the pinned LibreLane version as the starting
+point, retaining its licence notices, argument handling and report generation.
+The replacement runs as `yosys -y <script.py>` and must:
+
+- Accept `--config-in`, `--extra-in` and `--output`. The first two are JSON
+  files containing the step configuration and prepared library/model inputs.
+- Read the configured RTL and libraries and write the mapped Verilog netlist
+  to `--output`.
+- Preserve the normal synthesis reports, including `reports/stat.json` beside
+  the output netlist, with its `design.num_cells`, `design.num_cells_by_type`
+  and, when available, `design.area` fields. Keep the synthesis check reports
+  (`pre_synth_chk.rpt`, `chk.rpt`) and any other outputs used by downstream
+  checks. Do not bypass checks merely by omitting reports.
+
+LibreLane continues to prepare the libraries, collect metrics and pass the
+mapped netlist to placement and routing. Helpers such as `ys_common` and
+`construct_abc_script` remain on the Python import path. Custom scripts must
+remain compatible with the installed/pinned LibreLane API.
+
+For example, a tile-specific recipe can infer larger muxes from generic mux
+trees after lowering to generic gate primitives and before standard-cell ABC
+mapping. Within a LibreLane-style script, the following illustrates the passes
+to insert, not a complete replacement script:
+
+```python
+from pathlib import Path
+
+# d is the recipe's ys_common Design after generic gate lowering.
+d.run_pass("muxcover", "-mux4=210", "-mux2=100", "-nodecode")
+mux_map = Path(__file__).resolve().with_name("mux4_map.v")
+d.run_pass("techmap", "-map", str(mux_map))
+# Continue with the recipe's ABC mapping, cleanup, checks and output reports.
+```
+
+The techmap must implement the inferred mux primitives using cells present in
+the selected standard-cell library. An IHP recipe may map `$_MUX4_` to
+`sg13g2_mux4_1`; another PDK needs its own mapping, or an explicit decomposition
+back into supported generic primitives before ABC. FABulous does not inject
+IHP cells or choose a techmap automatically. Keep helper files beside the recipe
+and resolve them from `__file__`, not the synthesis working directory.
+
+The same recipe can customise ABC commands, muxcover costs and other synthesis
+passes. Existing declared configuration options such as `SYNTH_STRATEGY` are
+available in the input configuration; arbitrary new YAML keys are not exposed
+automatically. Put recipe-specific options in the Python script or a companion
+file, or declare them in a custom LibreLane step. Validate equivalence and area
+for each library and recipe before adopting it.
+
 (pin-config)=
 
 ### Pin Config

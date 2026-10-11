@@ -683,7 +683,7 @@ requires-dist = [
     { name = "fabulous-bit-gen", git = "https://github.com/FPGA-Research/FABulous-bit-gen-OWAS.git?branch=main" },
     { name = "go-task-bin", specifier = ">=3.40.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "librelane", git = "https://github.com/librelane/librelane.git?rev=aaf7a938766e0708ca894776d81e2c2cfb12b7e7" },
+    { name = "librelane", url = "https://github.com/librelane/librelane/archive/aaf7a938766e0708ca894776d81e2c2cfb12b7e7.tar.gz" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "numpy", specifier = ">=2.5.1" },
@@ -1014,7 +1014,7 @@ wheels = [
 [[package]]
 name = "librelane"
 version = "3.1.0.dev3"
-source = { git = "https://github.com/librelane/librelane.git?rev=aaf7a938766e0708ca894776d81e2c2cfb12b7e7#aaf7a938766e0708ca894776d81e2c2cfb12b7e7" }
+source = { url = "https://github.com/librelane/librelane/archive/aaf7a938766e0708ca894776d81e2c2cfb12b7e7.tar.gz" }
 dependencies = [
     { name = "ciel" },
     { name = "click" },
@@ -1030,6 +1030,25 @@ dependencies = [
     { name = "rich" },
     { name = "semver" },
     { name = "yamlcore" },
+]
+sdist = { hash = "sha256:b6f7577f68dad17f879deebe52089ea055a1056ae02fa6bc88a908463b522d2d" }
+
+[package.metadata]
+requires-dist = [
+    { name = "ciel", specifier = ">=3.0.0,<4" },
+    { name = "click", specifier = ">=8,<8.4" },
+    { name = "cloup", specifier = ">=3.0.5,<4" },
+    { name = "deprecated", specifier = ">=1.2.10,<2" },
+    { name = "httpx", specifier = ">=0.22.0,<0.29" },
+    { name = "klayout", specifier = ">=0.29.0,<0.32.0" },
+    { name = "lln-libparse", specifier = "==0.56.*" },
+    { name = "lxml", specifier = ">=4.9.0" },
+    { name = "psutil", specifier = ">=5.9.0" },
+    { name = "pyyaml", specifier = ">=5,<7" },
+    { name = "rapidfuzz", specifier = ">=3.9.0,<4" },
+    { name = "rich", specifier = ">=12,<16" },
+    { name = "semver", specifier = ">=3.0.2,<4" },
+    { name = "yamlcore", specifier = ">=0.0.2,<0.1.0" },
 ]
 
 [[package]]

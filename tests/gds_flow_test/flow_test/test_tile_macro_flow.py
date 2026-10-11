@@ -33,6 +33,41 @@ from fabulous.fabric_generator.gds_generator.steps.tile_area_opt import OptMode
 class TestFABulousTileVerilogMacroFlowInit:
     """Tests for FABulousTileVerilogMacroFlow initialization and configuration."""
 
+    @pytest.mark.parametrize("override", ["inherit", "replace", "disable"])
+    def test_synthesis_script_layers(
+        self,
+        tmp_path: Path,
+        mock_tile: MagicMock,
+        io_pin_config: Path,
+        mock_pdk_root: dict[str, Any],
+        override: str,
+    ) -> None:
+        """A tile can inherit, replace or disable the shared synthesis recipe."""
+        shared_script = tmp_path / "shared.py"
+        tile_script = tmp_path / "tile.py"
+        shared_script.touch()
+        tile_script.touch()
+        base = tmp_path / "base.yaml"
+        tile = tmp_path / "tile.yaml"
+        base.write_text(yaml.safe_dump({"FABULOUS_SYNTH_SCRIPT": str(shared_script)}))
+        values = {}
+        expected = str(shared_script)
+        if override != "inherit":
+            expected = str(tile_script) if override == "replace" else None
+            values["FABULOUS_SYNTH_SCRIPT"] = expected
+        tile.write_text(yaml.safe_dump(values))
+        flow = self._create_flow(
+            tile_type=mock_tile,
+            io_pin_config=io_pin_config,
+            mock_pdk_root=mock_pdk_root,
+            base_config_path=base,
+            override_config_path=tile,
+        )
+        assert flow.config["FABULOUS_SYNTH_SCRIPT"] == expected
+        assert "FABULOUS_SYNTH_SCRIPT" in {
+            variable.name for variable in flow.get_all_config_variables()
+        }
+
     def _create_flow(
         self,
         *,
